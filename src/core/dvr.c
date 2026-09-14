@@ -611,17 +611,6 @@ void dvr_collect_stop(void) {
 void dvr_cmd(osd_dvr_cmd_t cmd) {
     LOGI("dvr_cmd: sdcard=%d, recording=%d, cmd=%d", g_sdcard_enable, dvr_is_recording, cmd);
 
-    if (!g_sdcard_enable)
-        return;
-
-    if (cmd == DVR_STOP)
-        dvr_stop_wanted = true;
-
-    pthread_mutex_lock(&dvr_mutex);
-
-    if (cmd == DVR_STOP)
-        dvr_stop_wanted = false;
-
     bool start_rec = dvr_is_recording;
 
     switch (cmd) {
@@ -641,7 +630,15 @@ void dvr_cmd(osd_dvr_cmd_t cmd) {
         return;
     }
 
+    // Set before taking dvr_mutex, so a start still polling for the record
+    // process can give up early and let this stop through.
+    if (cmd == DVR_STOP)
+        dvr_stop_wanted = true;
+
     pthread_mutex_lock(&dvr_mutex);
+
+    if (cmd == DVR_STOP)
+        dvr_stop_wanted = false;
 
     if (start_rec) {
         if (!dvr_is_recording && !sdcard_is_full()) {
