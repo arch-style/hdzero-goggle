@@ -27,7 +27,13 @@ void self_test() {
     char *msg[2] = {"[Error]", "[Pass] "};
 
 #ifdef HDZGOGGLE2
-    system_exec("dispw -s vdpo 1080p50");
+    // Upstream (d2dea35c) sets the display output to 1080p50 here, before
+    // anything else, and dispw is 1.1s on this SoC. Skip Display Setup leaves
+    // it out for the same reason it leaves out the one in Display_UI_init():
+    // the switch to the last source reconfigures the output moments later,
+    // and the 9.5.1 fork booted for weeks without any dispw before the video.
+    if (!g_setting.speed.boot_display)
+        system_exec("dispw -s vdpo 1080p50");
     system_exec("aww 0x0300b340 0x00000008");
 #endif
 
