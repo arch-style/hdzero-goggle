@@ -50,6 +50,9 @@ typedef struct {
 } ht_data_t;
 
 void ht_init();
+// Let the motion timer start reading. Until this is called it does nothing,
+// because reading an unconfigured sensor spins on the I2C bus.
+void ht_set_imu_ready(void);
 void ht_enable();
 void ht_disable();
 void ht_detect_motion();

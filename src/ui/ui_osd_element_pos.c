@@ -538,7 +538,7 @@ void ui_osd_element_pos_init(void) {
     lv_obj_add_style(ui_root_container, &style_context, LV_PART_MAIN);
     lv_obj_set_style_grid_column_dsc_array(ui_root_container, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(ui_root_container, row_dsc, 0);
-    create_select_item(&ui_selection_panel, ui_root_container);
+    create_select_item(&ui_selection_panel, ui_root_container, GRID_ROWS(row_dsc));
 
     // create all elements
     create_btn_group_item_compact(&btn_group_osd_mode, ui_root_container, 2, _lang("Mode"), "4x3", "16x9", "", "", ROW_OSD_MODE, 40, 80, UI_OSD_TEXT_FONT);

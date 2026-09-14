@@ -815,7 +815,7 @@ static void page_version_fw_select_create(const char *device, fw_select_t *fw_se
     lv_obj_set_style_grid_row_dsc_array(fw_select->container, mbsbox_row_dsc, 0);
 
     fw_select->this.max = 3;
-    create_select_item(&fw_select->this, fw_select->container);
+    create_select_item(&fw_select->this, fw_select->container, GRID_ROWS(mbsbox_row_dsc));
     for (int i = 0; i < fw_select->this.max; ++i) {
         lv_obj_set_style_bg_color(fw_select->this.panel[i], lv_color_make(0x44, 0x44, 0x44), 0);
     }
@@ -865,8 +865,8 @@ static lv_obj_t *page_version_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
-    create_select_item(arr, cont);
-    cur_ver_label = create_label_item(cont, _lang("Current Version"), 1, ROW_CUR_VERSION, 3);
+    create_select_item(arr, cont, GRID_ROWS(row_dsc));
+    cur_ver_label = create_label_item(cont, _lang("Current Version"), 1, ROW_CUR_VERSION, 2);
 
     btn_reset_all_settings = create_label_item(cont, _lang("Reset all settings"), 1, ROW_RESET_ALL_SETTINGS, 2);
 
@@ -1212,6 +1212,7 @@ static int get_progress_info(int *v0, int *v1) {
 }
 
 void *thread_version(void *ptr) {
+    log_thread_id("version");
     int count = 0;
     int sec = 0;
     int sec_last = 0;

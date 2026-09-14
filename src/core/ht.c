@@ -24,6 +24,7 @@
 #include "driver/screen.h"
 #include "ui/page_common.h"
 #include "util/math.h"
+#include "util/system.h"
 
 // #define FAST_SIM
 typedef enum {
@@ -194,7 +195,28 @@ static void get_imu_data() {
     has_motion_data = true;
 }
 
+// The timer is armed for one second from ht_init() and fires at 100Hz from
+// then on, regardless of whether the sensor is up: it is a POSIX timer, not
+// something the app's threads gate. get_bmi270() polls the data-ready bit in
+// an unbounded loop, so reading a sensor that has not been configured spins
+// on the I2C bus forever, and that bus is shared with the FPGA.
+static volatile bool imu_ready = false;
+
+void ht_set_imu_ready(void) {
+    imu_ready = true;
+}
+
 static void timer_callback_imu(union sigval timer_data) {
+    static bool named = false;
+
+    if (!named) {
+        named = true;
+        log_thread_id("imu timer");
+    }
+
+    if (!imu_ready)
+        return;
+
     get_imu_data();
     calculate_orientation();
 }
@@ -392,6 +414,8 @@ void head_alarm_init() {
 }
 
 void *head_alarm_thread(void *arg) {
+    log_thread_id("head alarm");
+
     while (1) {
         bool sounding_alarm = false;
         if (ht_data.enable && (g_setting.ht.alarm_state != SETTING_HT_ALARM_STATE_OFF)) {                                                                                                             // user settings

@@ -177,6 +177,14 @@ int lvgl_switch_to_720p() {
     return 0;
 }
 
+// LVGL resamples a transformed object with bilinear filtering when the driver
+// says antialias, and with nearest neighbour when it does not. The scaled menu
+// is the only thing here that gets transformed, and the filtering is what
+// makes navigating it heavy.
+void lvgl_set_antialiasing(bool enable) {
+    disp_drv.antialiasing = enable ? 1 : 0;
+}
+
 int lvgl_switch_to_1080p() {
     lvgl_screen_orbit(false);
     lv_disp_draw_buf_init(&draw_buf, disp_buf, NULL, DRAW_HOR_RES_FHD * DRAW_VER_RES_FHD * 4);

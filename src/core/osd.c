@@ -23,6 +23,7 @@
 #include "core/elrs.h"
 #include "core/msp_displayport.h"
 #include "core/settings.h"
+#include "util/time.h"
 #include "driver/dm5680.h"
 #include "driver/fans.h"
 #include "driver/fbtools.h"
@@ -36,6 +37,7 @@
 #include "ui/page_scannow.h"
 #include "ui/ui_image_setting.h"
 #include "ui/ui_porting.h"
+#include "util/system.h"
 
 extern const lv_font_t conthrax_26;
 extern const lv_font_t robotomono_26;
@@ -174,7 +176,11 @@ void osd_rec_show(bool bShow) {
         return;
     }
 
-    if (!g_sdcard_enable || !g_sdcard_ready) {
+    // A card the recorder has given up on gets the no-card icon: that is what
+    // it amounts to, and the word beside it says why.
+    const char *fault = dvr_auto_halt_reason();
+
+    if (!g_sdcard_enable || !g_sdcard_ready || (fault && !dvr_is_recording)) {
         osd_resource_path(buf, "%s", is_fhd, noSdcard_bmp);
         lv_img_set_src(g_osd_hdzero.sd_rec[is_fhd], buf);
         lv_obj_clear_flag(g_osd_hdzero.sd_rec[is_fhd], LV_OBJ_FLAG_HIDDEN);
@@ -189,6 +195,14 @@ void osd_rec_show(bool bShow) {
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
     osd_hdmi_in_dvr_update();
 #endif
+
+    if (fault && g_sdcard_enable && !dvr_is_recording) {
+        snprintf(buf, sizeof(buf), "DVR off: %s", fault);
+        lv_label_set_text(g_osd_hdzero.dvr_fault[is_fhd], buf);
+        lv_obj_align_to(g_osd_hdzero.dvr_fault[is_fhd], g_osd_hdzero.sd_rec[is_fhd], LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+        lv_obj_clear_flag(g_osd_hdzero.dvr_fault[is_fhd], LV_OBJ_FLAG_HIDDEN);
+    } else
+        lv_obj_add_flag(g_osd_hdzero.dvr_fault[is_fhd], LV_OBJ_FLAG_HIDDEN);
 }
 
 void osd_battery_low_show() {
@@ -389,7 +403,15 @@ char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // cha
         else
             return hdzero_channel_name[is_lowband][0];
     } else {
-        return analog_channel_name[channel - 1];
+        // The HDZero side has always been bounds checked and the analog side
+        // never was, so a channel out of range walked off the end of the table
+        // and handed lv_label_set_text() whatever was there. Settings are
+        // clamped on load now, but this is the array being indexed, so it
+        // answers for itself.
+        if ((channel > 0) && (channel <= ANALOG_CHANNEL_NUM))
+            return analog_channel_name[channel - 1];
+        else
+            return analog_channel_name[0];
     }
 }
 
@@ -686,8 +708,18 @@ void osd_hdzero_update(void) {
         g_osd_update_cnt++;
     }
 
-    if (fhd_change())
-        return;
+    // Only while the picture is the thing on screen. Menu Over Video leaves
+    // the FPGA on the live source, so HDZERO_detect() keeps running and a
+    // camera changing between 720p and 1080p still raises fhd_req -- and
+    // fhd_change() ends with osd_show(true), which puts the OSD screen over
+    // the menu the user is in the middle of using, at the old zoom. The
+    // request is not cleared here, so it is applied on the way back to video.
+    if (g_app_state == APP_STATE_VIDEO ||
+        g_app_state == APP_STATE_IMS ||
+        g_app_state == APP_STATE_OSD_ELEMENT_PREV) {
+        if (fhd_change())
+            return;
+    }
 
     // if the user is in the osd element position settings, show all elements
     if (g_app_state == APP_STATE_OSD_ELEMENT_PREV) {
@@ -875,6 +907,14 @@ static void embedded_osd_init(uint8_t fhd) {
     osd_resource_path(buf, "%s", is_fhd, noSdcard_bmp);
     osd_object_create_img(fhd, &g_osd_hdzero.sd_rec[fhd], buf, &g_setting.osd.element[OSD_GOGGLE_SD_REC].position, so);
 
+    // Placed beside sd_rec whenever it is shown, so its own position is
+    // only a starting point.
+    osd_object_create_label(fhd, &g_osd_hdzero.dvr_fault[fhd], "", &g_setting.osd.element[OSD_GOGGLE_SD_REC].position, so);
+    lv_obj_set_style_bg_color(g_osd_hdzero.dvr_fault[fhd], lv_color_hex(0x010101), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_osd_hdzero.dvr_fault[fhd], LV_OPA_100, 0);
+    lv_obj_set_style_pad_hor(g_osd_hdzero.dvr_fault[fhd], 6, 0);
+    lv_obj_add_flag(g_osd_hdzero.dvr_fault[fhd], LV_OBJ_FLAG_HIDDEN);
+
     osd_resource_path(buf, "%s", is_fhd, VLQ1_bmp);
     osd_object_create_img(fhd, &g_osd_hdzero.vlq[fhd], buf, &g_setting.osd.element[OSD_GOGGLE_VLQ].position, so);
 
@@ -936,11 +976,15 @@ void osd_update_element_positions() {
     }
 }
 
+static bool osd_font_prefetch_wait(void);
+
 static void fc_osd_init(uint8_t fhd, uint16_t OFFSET_X, uint16_t OFFSET_Y) {
     uint8_t osd_width = fhd ? OSD_WIDTH_FHD : OSD_WIDTH_HD;
     uint8_t osd_height = fhd ? OSD_HEIGHT_FHD : OSD_HEIGHT_HD;
 
-    load_fc_osd_font(fhd);
+    // Only the first caller waits; by the second the fonts are already in.
+    if (!osd_font_prefetch_wait())
+        load_fc_osd_font(fhd);
 
     for (int i = 0; i < HD_VMAX; i++) {
         for (int j = 0; j < HD_HMAX; j++) {
@@ -985,18 +1029,32 @@ int osd_init(void) {
                           clock_time, sizeof(clock_time),
                           clock_format, sizeof(clock_format));
 
+    // Each step timed: this is where a ten second stall has been seen once,
+    // and 1800 lv_img objects across two sets is the kind of work that hides
+    // one. The font wait is inside the first fc_osd_init().
+    uint32_t step_ms;
+
     create_osd_scr();
 
+    step_ms = time_ms();
     fc_osd_init(0, OFFSET_X, OFFSET_Y);
-    embedded_osd_init(0);
+    LOGI("boot step: osd hd grid %ums", time_ms() - step_ms);
 
+    step_ms = time_ms();
+    embedded_osd_init(0);
+    LOGI("boot step: osd hd embedded %ums", time_ms() - step_ms);
+
+    step_ms = time_ms();
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
     fc_osd_init(1, OFFSET_X + (OFFSET_X >> 1), OFFSET_Y + (OFFSET_Y >> 1));
 #elif defined(HDZBOXPRO)
     fc_osd_init(1, OFFSET_X, OFFSET_Y);
 #endif
+    LOGI("boot step: osd fhd grid %ums", time_ms() - step_ms);
 
+    step_ms = time_ms();
     embedded_osd_init(1);
+    LOGI("boot step: osd fhd embedded %ums", time_ms() - step_ms);
 
     sem_init(&osd_semaphore, 0, 1);
 
@@ -1106,6 +1164,52 @@ int load_fc_osd_font_bmp(const char *file, uint8_t fhd) {
     return 0;
 }
 
+// The two font sets take about a second of SD card reads between them, which
+// at boot happens while the display and the tuner are still being brought up
+// on entirely different buses. Reading them on a worker thread started first
+// hides that time. Pure file I/O into globals, no LVGL calls, so the only
+// thing to get right is that nothing reads the fonts before it finishes.
+static pthread_t font_prefetch_thread;
+static bool font_prefetch_running = false;
+static bool font_prefetch_done = false;
+
+static void *font_prefetch_worker(void *arg) {
+    log_thread_id("font preload");
+    (void)arg;
+
+    load_fc_osd_font(0);
+    load_fc_osd_font(1);
+
+    return NULL;
+}
+
+void osd_font_prefetch_start(void) {
+    if (!g_setting.speed.boot_fonts)
+        return;
+
+    if (pthread_create(&font_prefetch_thread, NULL, font_prefetch_worker, NULL) != 0) {
+        LOGE("osd: could not start the font prefetch, loading inline instead");
+        return;
+    }
+
+    font_prefetch_running = true;
+    LOGI("osd: font prefetch started");
+}
+
+// Returns true when the prefetch has supplied the fonts and the caller need
+// not load them itself.
+static bool osd_font_prefetch_wait(void) {
+    if (font_prefetch_running) {
+        pthread_join(font_prefetch_thread, NULL);
+        font_prefetch_running = false;
+        font_prefetch_done = true;
+        LOGI("osd: font prefetch collected");
+    }
+
+    // The worker loads both sets, so the second caller is served as well.
+    return font_prefetch_done;
+}
+
 void load_fc_osd_font(uint8_t fhd) {
     char fp[3][256];
     int i;
@@ -1182,6 +1286,7 @@ void osd_signal_update() {
 }
 
 void *thread_osd(void *ptr) {
+    log_thread_id("osd");
     static uint8_t fhd_d = 0;
     for (;;) {
         // wait for signal to render

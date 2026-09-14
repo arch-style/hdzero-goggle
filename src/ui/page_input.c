@@ -1,5 +1,7 @@
 #include "page_input.h"
 
+#include <log/log.h>
+
 #include <minIni.h>
 
 #include "../conf/ui.h"
@@ -64,6 +66,10 @@ static const action_t btnActions[] = {
     {.id = 7, .name = "Star DVR", .functionPtr = &dvr_star},
     {.id = 8, .name = "Toggle source", .functionPtr = &source_toggle},
     {.id = 9, .name = "Cycle source", .functionPtr = &source_cycle},
+    {.id = 11, .name = "Next channel", .functionPtr = &tune_channel_next},
+    {.id = 13, .name = "Previous channel", .functionPtr = &tune_channel_prev},
+    {.id = 14, .name = "Tuner re-init (debug)", .functionPtr = &app_tuner_reinit},
+    {.id = 12, .name = "HDZero Wide/Narrow", .functionPtr = &source_toggle_hdzero_bw},
 };
 
 static const action_t rollerActions[] = {
@@ -133,6 +139,16 @@ static void update_inputs() {
     rbtn_click_callback = btnActionFromId(g_setting.inputs.right_click)->functionPtr.btnFunction;
     rbtn_press_callback = btnActionFromId(g_setting.inputs.right_press)->functionPtr.btnFunction;
     rbtn_double_click_callback = btnActionFromId(g_setting.inputs.right_double_click)->functionPtr.btnFunction;
+
+    // A button that seems to do nothing is usually a button set to something
+    // else: "Star DVR" reads a lot like "Start DVR" in a dropdown.
+    LOGI("inputs: dial click=%s, dial press=%s, right click=%s, right press=%s, right double=%s, roller=%s",
+         btnActionFromId(g_setting.inputs.left_click)->name,
+         btnActionFromId(g_setting.inputs.left_press)->name,
+         btnActionFromId(g_setting.inputs.right_click)->name,
+         btnActionFromId(g_setting.inputs.right_press)->name,
+         btnActionFromId(g_setting.inputs.right_double_click)->name,
+         rollerActionFromId(g_setting.inputs.roller)->name);
 }
 
 /**
@@ -202,7 +218,7 @@ static lv_obj_t *page_input_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     char rollerOptionsStr[256] = "";
     build_options_string(rollerActions, ARRAY_SIZE(rollerActions), rollerOptionsStr);
-    char btnOptionsStr[256] = "";
+    char btnOptionsStr[512] = "";
     build_options_string(btnActions, ARRAY_SIZE(btnActions), btnOptionsStr);
 
     lv_obj_t *page = lv_menu_page_create(parent, NULL);
@@ -227,7 +243,7 @@ static lv_obj_t *page_input_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(content, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(content, row_dsc, 0);
 
-    create_select_item(arr, content);
+    create_select_item(arr, content, GRID_ROWS(row_dsc));
 
     snprintf(buf, sizeof(buf), "%s:", _lang("Roller"));
     create_label_item(content, buf, 1, ROLLER, 1);

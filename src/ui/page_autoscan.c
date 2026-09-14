@@ -38,7 +38,7 @@ static lv_obj_t *page_autoscan_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
-    create_select_item(arr, cont);
+    create_select_item(arr, cont, GRID_ROWS(row_dsc));
     lv_obj_set_grid_cell(pp_autoscan.p_arr.panel[1], LV_GRID_ALIGN_STRETCH, 0, 6,
                          LV_GRID_ALIGN_STRETCH, 1, 2);
     lv_obj_clear_flag(pp_autoscan.p_arr.panel[2], FLAG_SELECTABLE);

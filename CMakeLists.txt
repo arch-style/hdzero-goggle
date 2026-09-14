@@ -52,10 +52,29 @@ set(STANDARD_LIBRARIES
 	stdc++
 )
 
+# Stamped into the log at start-up. Logs get compared across builds and passed
+# between people, and "which binary wrote this" was not answerable from the
+# file: /mnt/app/version describes the flashed app, not a binary being run off
+# the SD card. git is not always in the build container, hence the fallback.
+file(STRINGS ${PROJECT_SOURCE_DIR}/VERSION APP_BASE_VERSION LIMIT_COUNT 1)
+execute_process(
+	COMMAND git describe --always --dirty
+	WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+	OUTPUT_VARIABLE APP_BUILD_ID
+	OUTPUT_STRIP_TRAILING_WHITESPACE
+	ERROR_QUIET
+)
+if(NOT APP_BUILD_ID)
+	set(APP_BUILD_ID "no-git")
+endif()
+message(STATUS "build id: ${APP_BASE_VERSION}-${APP_BUILD_ID}")
+
 add_definitions(
 	-DAWCHIP=AW_V5 
 	-D_GNU_SOURCE 
 	-DUSE_LOG_LIB_GLOG
+	-DAPP_BASE_VERSION="${APP_BASE_VERSION}"
+	-DAPP_BUILD_ID="${APP_BUILD_ID}"
 )
 
 if(EMULATOR_BUILD)

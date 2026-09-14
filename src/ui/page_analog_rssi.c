@@ -59,7 +59,7 @@ static lv_obj_t *page_analog_rssi_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
-    create_select_item(arr, cont);
+    create_select_item(arr, cont, GRID_ROWS(row_dsc));
 
     snprintf(buf, sizeof(buf), "%s", _lang("Calibrate RSSI Min"));
     calibrate_rssi_min_obj = create_label_item(cont, buf, 1, ROW_CALIBRATE_RSSI_MIN, 3);

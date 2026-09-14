@@ -16,6 +16,7 @@ pthread_mutex_t lvgl_mutex;
 atomic_int g_key = 0;
 atomic_int g_init_done = 0;       // 0= init not done, 1= done, -1= dial/up/down pressed
 atomic_int g_bootup_sdcard_state; // 0= no card, 1= has card, -1= finalized
+uint32_t g_boot_start_ms = 0;
 static hw_revision_t g_hw_revsion = HW_REV_UNKNOWN;
 ///////////////////////////////////////////////////////////////////////////////
 

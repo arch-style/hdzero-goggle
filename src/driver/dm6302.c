@@ -1,34 +1,131 @@
 #include "dm6302.h"
 
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <log/log.h>
+#include <minIni.h>
 
 #include "../core/common.hh"
+#include "../core/settings.h"
 #include "defines.h"
 #include "dm5680.h"
 #include "i2c.h"
 #include "uart.h"
 #include "util/system.h"
+#include "ui/page_common.h"
+#include "util/time.h"
 
-#define WAIT(ms) usleep((ms) * 1000)
+#define WAIT(ms) usleep((ms)*1000)
+
+// One SPI access is a sequence of FPGA register writes and reads, and only
+// the individual I2C transfers are serialised by the bus lock. Two threads
+// interleaving their sequences would mix up the bridge, so the sequence as a
+// whole is serialised here. Needed once the tuner init runs on a worker.
+static pthread_mutex_t spi_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// The burst is a single ioctl carrying every register write of the sequence;
+// the driver sends them with a repeated START between. On the goggles a
+// refusal shows up at most once per init and not in every init, and the
+// writes either side of it succeed, so it reads as a transient rather than a
+// register the bridge dislikes -- most likely it is still shifting the
+// previous SPI command out when the next burst arrives with no gap. So a
+// refusal is retried once after a pause and then that one sequence is redone
+// a register at a time. Only a run of refusals disables the burst for good.
+//
+// Retrying is safe because every attempt writes byte-identical values and
+// nothing reached this way is a FIFO or a write-to-clear: DM6302_M0()
+// addresses each word explicitly and the EFUSE/DCOC strobes are level
+// writes. A caller that broke either of those would break this.
+#define SPI_BURST_REFUSALS_MAX 20
+#define SPI_BURST_REFUSALS_LOGGED 5
+
+// A burst that takes hundreds of milliseconds is the bus fault at 1.2MHz
+// showing through: the driver times out, resets and retries, and the bus
+// lock is held for all of it. Measured at 5006ms with the stock timeout and
+// 501-510ms with Short I2C Timeout, always this transaction and never a
+// single-register write.
+//
+// The first version of this turned the burst off for the session after two
+// of them. The next session showed what that costs: every init after the
+// second stall took 1450ms instead of 780, for as long as the goggles were
+// on -- 670ms a time to avoid a 500ms stall that hits one init in ten. That
+// is a loss with the short timeout, and at 800kHz the stall never happens at
+// all. So the slow burst is counted and reported, and the burst stays on;
+// the refusal path below still retires a burst the driver will not send.
+#define SPI_BURST_SLOW_MS 500
+
+static bool spi_burst_refused = false;
+static unsigned spi_burst_refusals = 0;
+static unsigned spi_burst_slow = 0;
+
+static void spi_burst_took(uint32_t ms) {
+    if (ms < SPI_BURST_SLOW_MS)
+        return;
+
+    spi_burst_slow++;
+    LOGE("SPI: burst took %ums, %u so far this session", ms, spi_burst_slow);
+}
+
+static bool spi_write_regs(const uint8_t *regs, const uint8_t *vals, uint8_t count) {
+    if (g_setting.speed.spi_burst && !spi_burst_refused) {
+        uint32_t started_ms = time_ms();
+        int err = I2C_Write_Burst(ADDR_FPGA, regs, vals, count);
+        uint32_t took_ms = time_ms() - started_ms;
+
+        if (err == 0) {
+            spi_burst_took(took_ms);
+            return true;
+        }
+
+        // With Short I2C Timeout on, the stall comes back as a failure after
+        // 500ms and the retry below succeeds -- which is the same bus fault
+        // wearing a different return code. It has to count the same way, or
+        // the switch that shortens the damage also hides it from this.
+        spi_burst_took(took_ms);
+
+        usleep(300);
+        started_ms = time_ms();
+        err = I2C_Write_Burst(ADDR_FPGA, regs, vals, count);
+        if (err == 0) {
+            spi_burst_took(time_ms() - started_ms);
+            return true;
+        }
+
+        spi_burst_refusals++;
+        if (spi_burst_refusals <= SPI_BURST_REFUSALS_LOGGED)
+            LOGE("SPI: burst refused (errno %d) at page %x addr %02x%02x, %u so far",
+                 -err, vals[1] >> 4, vals[1] & 0x0F, vals[0], spi_burst_refusals);
+
+        if (spi_burst_refusals >= SPI_BURST_REFUSALS_MAX) {
+            spi_burst_refused = true;
+            LOGE("SPI: burst disabled after %u refusals", spi_burst_refusals);
+        }
+    }
+
+    for (uint8_t i = 0; i < count; i++)
+        I2C_Write(ADDR_FPGA, regs[i], vals[i]);
+
+    return false;
+}
 
 void SPI_Read(uint8_t page, uint16_t addr, uint32_t *dat0, uint32_t *dat1) {
-    uint8_t val;
     uint32_t rdat;
 
-    // spi_addr
-    val = addr & 0xFF;
-    I2C_Write(ADDR_FPGA, 0x91, val);
-    val = (page << 4) | (addr >> 8);
-    I2C_Write(ADDR_FPGA, 0x92, val);
+    pthread_mutex_lock(&spi_mutex);
 
-    // read cmd
-    I2C_Write(ADDR_FPGA, 0x90, 0x10);
+    // spi_addr, then the read cmd
+    {
+        const uint8_t regs[3] = {0x91, 0x92, 0x90};
+        const uint8_t vals[3] = {addr & 0xFF, (page << 4) | (addr >> 8), 0x10};
+
+        spi_write_regs(regs, vals, 3);
+    }
 
     // read dat
     rdat = I2C_Read(ADDR_FPGA, 0x9b);
@@ -49,36 +146,31 @@ void SPI_Read(uint8_t page, uint16_t addr, uint32_t *dat0, uint32_t *dat1) {
     rdat |= I2C_Read(ADDR_FPGA, 0x9c);
     *dat1 = rdat;
 
+    pthread_mutex_unlock(&spi_mutex);
+
 #ifdef _DEBUG_DM6300
     LOGI("SPI READ: addr=%x  data=  %x  %x", addr, (*dat1), (*dat0));
 #endif
 }
 
 void SPI_Write(uint8_t sel, uint8_t page, uint16_t addr, uint32_t dat) {
-    uint8_t val;
     uint32_t r1 = 0, r0 = 0;
 
-    // spi_addr
-    val = addr & 0xFF;
-    I2C_Write(ADDR_FPGA, 0x91, val);
-    val = (page << 4) | (addr >> 8);
-    I2C_Write(ADDR_FPGA, 0x92, val);
+    // spi_addr, spi_wdat, then the write cmd: seven registers, one sequence
+    const uint8_t regs[7] = {0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x90};
+    const uint8_t vals[7] = {
+        addr & 0xFF,
+        (page << 4) | (addr >> 8),
+        dat & 0xFF,
+        (dat >> 8) & 0xFF,
+        (dat >> 16) & 0xFF,
+        (dat >> 24) & 0xFF,
+        (sel == 0) ? 0x03 : sel,
+    };
 
-    // spi_wdat
-    val = dat & 0xFF;
-    I2C_Write(ADDR_FPGA, 0x93, val);
-    val = (dat >> 8) & 0xFF;
-    I2C_Write(ADDR_FPGA, 0x94, val);
-    val = (dat >> 16) & 0xFF;
-    I2C_Write(ADDR_FPGA, 0x95, val);
-    val = (dat >> 24) & 0xFF;
-    I2C_Write(ADDR_FPGA, 0x96, val);
-
-    // wrte cmd
-    if (sel == 0)
-        I2C_Write(ADDR_FPGA, 0x90, 0x03);
-    else
-        I2C_Write(ADDR_FPGA, 0x90, sel);
+    pthread_mutex_lock(&spi_mutex);
+    spi_write_regs(regs, vals, 7);
+    pthread_mutex_unlock(&spi_mutex);
 
 #ifdef _DEBUG_DM6300
     SPI_Read(page, addr, &r0, &r1);
@@ -489,9 +581,17 @@ void DM6302_M0() {
         0x32323A30,
         0x2036313A};
 
+    // Progress marks: this loop is 237 SPI writes and normally runs in about
+    // 140ms, but has once taken ten seconds while the main thread was stuck
+    // in osd_init(). The marks say whether it crawls throughout or stops dead
+    // at one point.
+    uint32_t m0_start_ms = time_ms();
+
     SPI_Write(0, 0x6, 0xFF0, 0x00000000);
     for (i = 0; i < 237; i++) {
         SPI_Write(0, 0x3, i << 2, dat[i]);
+        if ((i & 63) == 63)
+            LOGI("M0 write %u/237 at %ums", i + 1, time_ms() - m0_start_ms);
     }
 
     /*SPI_Write(0, 0x6, 0xFF0, 0x00000001);
@@ -1235,6 +1335,90 @@ typedef union _EFUSE {
 
 EFUSE_T efuse0, efuse1;
 
+// The efuse is programmed once at the factory, so a healthy read is the same
+// every boot. Logging a hash of the whole structure makes the fast two-chip
+// read checkable against the one-chip-at-a-time read it replaces: same
+// number, same calibration.
+static uint32_t efuse_fingerprint(const EFUSE_T *e) {
+    const unsigned char *p = (const unsigned char *)e;
+    uint32_t h = 2166136261u;
+
+    for (unsigned k = 0; k < sizeof(EFUSE_T); k++) {
+        h ^= p[k];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static void efuse_report(uint8_t SEL6302, const EFUSE_T *e) {
+    LOGI("EFUSE1 %d: band_num=%d bandgap=%08lx ical=%x rcal=%x fingerprint=%08x",
+         SEL6302, e->macro.m0.band_num, e->macro.m1.bandgap,
+         e->macro.m1.ical, e->macro.m1.rcal, efuse_fingerprint(e));
+}
+
+// The calibration block is burned at the factory, so on one goggle its
+// fingerprint should never change. It did: once in 179 reads at 1.2MHz, with
+// no error anywhere near it, the read went through and the data was wrong.
+// A receiver initialised from that block runs mis-calibrated and nothing says
+// so -- which is what one dead antenna until the next restart looks like.
+//
+// So the fingerprint each chip last agreed on is kept in setting.ini, and a
+// read that disagrees is done again for that chip. A second read matching the
+// stored value proves the first was the corrupt one. A second read matching
+// the first -- the same new value twice -- means the stored value is what was
+// wrong (a corrupt first-ever read, say), and it is replaced. The extra read
+// costs a few hundred milliseconds, and only when something disagreed.
+#define EFUSE_FP_SECTION "tuner"
+
+static const char *efuse_fp_key(uint8_t chip) {
+    return chip == 1 ? "efuse_fp1" : "efuse_fp2";
+}
+
+static uint32_t efuse_known_fp(uint8_t chip) {
+    char buf[16] = "";
+
+    ini_gets(EFUSE_FP_SECTION, efuse_fp_key(chip), "", buf, sizeof(buf), SETTING_INI);
+    return (uint32_t)strtoul(buf, NULL, 16);
+}
+
+static void efuse_store_fp(uint8_t chip, uint32_t fp) {
+    char buf[16];
+
+    snprintf(buf, sizeof(buf), "%08x", fp);
+    ini_puts(EFUSE_FP_SECTION, efuse_fp_key(chip), buf, SETTING_INI);
+}
+
+void DM6302_EFUSE1(uint8_t SEL6302);
+
+static void efuse_verify(uint8_t chip) {
+    const EFUSE_T *e = (chip == 1) ? &efuse0 : &efuse1;
+    uint32_t got = efuse_fingerprint(e);
+    uint32_t known = efuse_known_fp(chip);
+
+    if (known == 0) {
+        efuse_store_fp(chip, got);
+        LOGI("EFUSE1 %d: fingerprint %08x recorded as this goggle's", chip, got);
+        return;
+    }
+
+    if (got == known)
+        return;
+
+    LOGE("EFUSE1 %d: fingerprint %08x, this goggle's is %08x -- reading again", chip, got, known);
+    DM6302_EFUSE1(chip);
+
+    uint32_t again = efuse_fingerprint(e);
+
+    if (again == known) {
+        LOGE("EFUSE1 %d: second read matches, the first was a corrupt read", chip);
+    } else if (again == got) {
+        LOGE("EFUSE1 %d: the same new value twice, %08x replaces the stored one", chip, again);
+        efuse_store_fp(chip, again);
+    } else {
+        LOGE("EFUSE1 %d: three different values (%08x stored, %08x, %08x), keeping the last", chip, known, got, again);
+    }
+}
+
 void DM6302_EFUSE1(uint8_t SEL6302) {
     int i, j;
     uint32_t r0, r1, rdat_sel;
@@ -1378,6 +1562,131 @@ void DM6302_EFUSE1(uint8_t SEL6302) {
 
     SPI_Write(SEL6302, 0x6, 0xF14, efuse_sel->macro.m1.bandgap);
     SPI_Write(SEL6302, 0x6, 0xF18, r1);
+
+    efuse_report(SEL6302, efuse_sel);
+}
+
+// One efuse word from both chips at once. SPI_Read already returns both, and
+// SPI_Write with sel 0 addresses both, so the only thing the per-chip version
+// gained was reading one ready bit instead of two -- at the price of doing
+// the whole walk twice. Waits for both chips before taking the data.
+static void efuse_read_both(int macro, int j, uint32_t *d0, uint32_t *d1) {
+    uint32_t r0, r1;
+
+    // EFUSE_CFG = (macro<<11) | (j<<4) | 0x1, to both chips
+    SPI_Write(0, 0x3, 0x7D0, (macro << 11) | (j << 4) | 0x1);
+
+    do {
+        SPI_Read(0x3, 0x7D4, &r0, &r1);
+    } while ((r0 & 1) || (r1 & 1));
+
+    SPI_Read(0x3, 0x7D8, d0, d1);
+}
+
+// The two-chip walk. Mirrors DM6302_EFUSE1() exactly, including where each
+// chip stops early: band_num can differ between the two, and so can the
+// frequency sanity check that ends a band's read, so both are tracked per
+// chip and only the chip still reading has its bytes stored.
+void DM6302_EFUSE1_both(void) {
+    int i, j;
+    uint32_t r0, r1;
+    int band_max;
+
+    memset((char *)&efuse0, 0, sizeof(EFUSE_T));
+    memset((char *)&efuse1, 0, sizeof(EFUSE_T));
+
+    // EFUSE_RST = 1
+    SPI_Write(0, 0x6, 0xFF0, 0x00000019);
+    SPI_Write(0, 0x3, 0x0E0, 0x00000001);
+
+    LOGI("EFUSE1 both, s1");
+
+    SPI_Write(0, 0x6, 0xFF0, 0x00000018);
+
+    for (j = 66; j < 68; j++) { // read macro 0
+        efuse_read_both(0, j, &r0, &r1);
+        efuse0.dat[0][j] = r0 & 0xFF;
+        efuse1.dat[0][j] = r1 & 0xFF;
+    }
+
+    LOGI("EFUSE1 both, s2");
+
+    for (j = 0; j < 12; j++) { // read macro 1
+        efuse_read_both(1, j, &r0, &r1);
+        efuse0.dat[1][j] = r0 & 0xFF;
+        efuse1.dat[1][j] = r1 & 0xFF;
+    }
+
+    band_max = efuse0.macro.m0.band_num;
+    if (efuse1.macro.m0.band_num > band_max)
+        band_max = efuse1.macro.m0.band_num;
+
+    LOGI("EFUSE1 both, s3, %d/%d", efuse0.macro.m0.band_num, efuse1.macro.m0.band_num);
+
+    for (i = 2; i < band_max + 2; i++) { // read macro 2~11
+        bool in0 = (i < efuse0.macro.m0.band_num + 2);
+        bool in1 = (i < efuse1.macro.m0.band_num + 2);
+        bool go0, go1;
+
+        go0 = in0;
+        go1 = in1;
+        for (j = 0; j < 20 && (go0 || go1); j++) {
+            efuse_read_both(i, j, &r0, &r1);
+            if (go0)
+                efuse0.dat[i][j] = r0 & 0xFF;
+            if (go1)
+                efuse1.dat[i][j] = r1 & 0xFF;
+
+            if (j == 3) {
+                if (go0 && (efuse0.macro.m2[i - 2].rx1.freq_start < 5000 ||
+                            efuse0.macro.m2[i - 2].rx1.freq_stop > 6000))
+                    go0 = false;
+                if (go1 && (efuse1.macro.m2[i - 2].rx1.freq_start < 5000 ||
+                            efuse1.macro.m2[i - 2].rx1.freq_stop > 6000))
+                    go1 = false;
+            }
+        }
+
+        LOGI("EFUSE1 both, s3-%i", i);
+
+        go0 = in0;
+        go1 = in1;
+        for (j = 64; j < 84 && (go0 || go1); j++) {
+            efuse_read_both(i, j, &r0, &r1);
+            if (go0)
+                efuse0.dat[i][j] = r0 & 0xFF;
+            if (go1)
+                efuse1.dat[i][j] = r1 & 0xFF;
+
+            if (j == 67) {
+                if (go0 && (efuse0.macro.m2[i - 2].rx2.freq_start < 5000 ||
+                            efuse0.macro.m2[i - 2].rx2.freq_stop > 6000))
+                    go0 = false;
+                if (go1 && (efuse1.macro.m2[i - 2].rx2.freq_start < 5000 ||
+                            efuse1.macro.m2[i - 2].rx2.freq_stop > 6000))
+                    go1 = false;
+            }
+        }
+    }
+
+    LOGI("EFUSE1 both, s4");
+
+    // EFUSE_CFG = 0, EFUSE_RST = 0
+    SPI_Write(0, 0x3, 0x7D0, 0x00000000);
+    SPI_Write(0, 0x6, 0xFF0, 0x00000019);
+    SPI_Write(0, 0x3, 0x0E0, 0x00000000);
+
+    // The calibration write-back is per chip, so it stays per chip.
+    r0 = ((efuse0.macro.m1.ical & 0x1F) << 3) | (efuse0.macro.m1.rcal & 0x7);
+    SPI_Write(1, 0x6, 0xF14, efuse0.macro.m1.bandgap);
+    SPI_Write(1, 0x6, 0xF18, r0);
+
+    r1 = ((efuse1.macro.m1.ical & 0x1F) << 3) | (efuse1.macro.m1.rcal & 0x7);
+    SPI_Write(2, 0x6, 0xF14, efuse1.macro.m1.bandgap);
+    SPI_Write(2, 0x6, 0xF18, r1);
+
+    efuse_report(1, &efuse0);
+    efuse_report(2, &efuse1);
 }
 
 void DM6302_EFUSE2(uint8_t SEL6302) {
@@ -1664,10 +1973,72 @@ void DM6302_DCOC(uint8_t SEL6302) {
     SPI_Write(SEL6302, 0x3, 0x4D4, 0x066727CC); // 0x066427CC
 }
 
+// The init runs the main I2C bus faster for its duration. Stock wrote 0x08,
+// which its comment calls 1MHz: SCL = 24MHz / ((M+1) * 10) with M=1 is
+// 1.2MHz, above the I2C ceiling, and the FPGA has been measured not keeping
+// up with it. The choice is a setting now, so the values can be compared on
+// the goggles rather than argued about: 0x10 is 800kHz, the fastest inside
+// the spec, and "200k" means not touching the register at all, which is what
+// upstream has done since 9.6.
+//
+// Written under the bus lock so no transfer is in flight on it; with the
+// init on a worker the OLED and display set-up share that bus at the time.
+#define TWI_CCR_1200K 0x08
+#define TWI_CCR_800K  0x10
+#define TWI_CCR_200K  0x58
+
+enum { TUNER_BUS_1200K = 0, TUNER_BUS_800K, TUNER_BUS_NONE };
+
+static uint32_t tuner_bus_duty(void) {
+    return (g_setting.speed.tuner_bus_duty40 && g_twi2_ccr_has_duty) ? TWI_CCR_DUTY40 : 0;
+}
+
+static void dm6302_bus_write(uint32_t ccr) {
+    char cmd[48];
+
+    snprintf(cmd, sizeof(cmd), "aww 0x%08x 0x%08x", TWI2_CCR_ADDR, ccr);
+    i2c_bus_lock(2);
+    system_exec(cmd);
+    i2c_bus_unlock(2);
+}
+
+static void dm6302_bus_fast(void) {
+    static const char *name[] = {"1.2MHz", "800kHz"};
+    uint8_t mode = g_setting.speed.tuner_bus;
+
+    if (mode == TUNER_BUS_NONE) {
+        LOGI("twi: tuner init at the bus's own clock (CCR 0x%02x)", g_twi2_ccr_default & 0xFF);
+        return;
+    }
+
+    static bool duty_complained = false;
+
+    if (g_setting.speed.tuner_bus_duty40 && !g_twi2_ccr_has_duty && !duty_complained) {
+        duty_complained = true;
+        LOGE("twi: 40%% duty asked for, but this SoC has no duty bit; ignoring it");
+    }
+
+    uint32_t ccr = (mode == TUNER_BUS_800K ? TWI_CCR_800K : TWI_CCR_1200K) | tuner_bus_duty();
+    LOGI("twi: tuner bus %s%s (CCR 0x%02x)", name[mode], tuner_bus_duty() ? ", 40% duty" : "", ccr);
+    dm6302_bus_write(ccr);
+}
+
+// Back to 200kHz. Stock wrote 0x58 here, which on a SoC with the duty bit
+// also clears it -- so the bus ran at 50% duty for the rest of the session
+// even if the kernel had set 40%. With the duty switch on, the bit is kept.
+static void dm6302_bus_normal(void) {
+    if (g_setting.speed.tuner_bus == TUNER_BUS_NONE)
+        return;
+
+    dm6302_bus_write(TWI_CCR_200K | tuner_bus_duty());
+}
+
 // DM6302 init
 int DM6302_init(uint8_t freq, uint8_t bw) {
     int to_cnt = 0;
     uint32_t r0 = 1, r1 = 1;
+
+    dm6302_bus_fast();
 
     while (r0) {
         DM5680_ResetRF(0);
@@ -1687,15 +2058,28 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
         to_cnt++;
         if (to_cnt >= 10) {
             LOGE("Error: DM6302s have no response.");
+            // Back to 200kHz before giving up. This return used to leave the
+            // bus at 1MHz for the rest of the session, and with the init on a
+            // worker that window now covers the boot display bring-up too.
+            dm6302_bus_normal();
             return 1;
         }
     }
 
-    DM6302_EFUSE1(1);
-    LOGI("EFUSE1 1 done");
+    if (g_setting.speed.fast_efuse) {
+        DM6302_EFUSE1_both();
+        LOGI("EFUSE1 both done");
+    } else {
+        DM6302_EFUSE1(1);
+        LOGI("EFUSE1 1 done");
 
-    DM6302_EFUSE1(2);
-    LOGI("EFUSE1 2 done");
+        DM6302_EFUSE1(2);
+        LOGI("EFUSE1 2 done");
+    }
+
+    // Before anything is configured from the block.
+    efuse_verify(1);
+    efuse_verify(2);
 
     DM6302_Init1(0, bw);
     LOGI("Init1 done");
@@ -1753,6 +2137,18 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
 
     DM6302_M0();
     LOGI("M0 done");
+
+    dm6302_bus_normal();
+
+    // Recorded, never judged. Checking 0x6/0xFF0 for 0x18 here was wrong:
+    // DM6302_M0() writes zero to that register on its first line to load the
+    // M0 image, so the check failed every time and took the picture with it.
+    // What a healthy chip reads back at this point is simply not known, and
+    // there is no documentation for these parts, so log both sides and let
+    // the logs from a working goggle and a misbehaving one say what it is.
+    // Nothing acts on this.
+    SPI_Read(0x6, 0xFF0, &r0, &r1);
+    LOGI("DM6302 after init: 0x6/0xFF0 left=0x%x right=0x%x", r0, r1);
 
     return 0;
 }

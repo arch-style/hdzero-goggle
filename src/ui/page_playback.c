@@ -427,6 +427,11 @@ static void page_playback_exit() {
 }
 
 static void page_playback_enter() {
+    // Everything on this page ends in video going to the SoC's VO, which needs
+    // the display to belong to the UI. With Menu Over Video it does not, so
+    // the switch that was skipped on the way in happens here instead.
+    app_menu_end_overlay();
+
     const int ret = walk_sdcard();
     update_page();
 

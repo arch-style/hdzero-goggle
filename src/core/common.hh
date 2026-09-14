@@ -35,6 +35,9 @@ hw_revision_t getHwRevision();
 extern atomic_int g_key;
 extern atomic_int g_init_done;
 extern atomic_int g_bootup_sdcard_state;
+// time_ms() at the first line of main(), so anything can say how far into
+// start-up it is. Zero once time_ms() has been called nowhere earlier.
+extern uint32_t g_boot_start_ms;
 extern pthread_mutex_t lvgl_mutex;
 
 #ifdef __cplusplus

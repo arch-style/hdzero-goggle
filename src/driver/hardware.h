@@ -60,6 +60,7 @@ typedef struct {
     // hdzero
     int hdz_bw; // 0=27MHz; 1=17MHz
     int hdzero_open;
+    int hdz_standby; // 1=baseband stopped but DM6302 still configured
     int m0_open;
 
     // av in
@@ -82,12 +83,39 @@ extern int fhd_req;
 void hw_stat_init();
 
 void hw_screen_on(int bON);
+// 0 = UI, 1 = the live source. Reopens the M0 when the tuner is open.
+void Display_VO_SWITCH(uint8_t sel);
 void HDZero_open(int bw);
 void HDZero_Close();
+void HDZero_Standby();
+// Run HDZero_open(bw) on a worker. The next HDZero_open/Close/Standby waits
+// for it first, so callers need not know whether it is still running.
+void HDZero_open_async_start(int bw);
+// True while that worker has not been collected yet.
+bool HDZero_open_pending(void);
+// Wait for an outstanding async tuner init to finish. For start-up code on the
+// main thread that shares the I2C bus with it and cannot run at the 1MHz the
+// init sets; see the comment on the definition.
+void HDZero_open_async_wait(void);
 
 void Source_HDMI_in();
 void Source_AV(bool is_av_in);
 void Display_UI_init();
+// True once dispw has actually been run, so callers can tell a real display
+// state from the assumed boot one.
+bool vdpo_timing_applied(void);
+// True while a background timing change has been started and not yet
+// collected by vdpo_set_timing(). This outlasts dispw itself; for "is the
+// display still being reconfigured right now", use vdpo_timing_running().
+bool vdpo_timing_pending(void);
+// True only while the dispw process is actually running.
+bool vdpo_timing_running(void);
+// Finish any outstanding background timing change. A no-op when there is
+// none; there so no path can leave one hanging.
+void vdpo_timing_collect(void);
+// Begin a display timing change in the background; the next vdpo_set_timing()
+// for the same timing collects it instead of running dispw itself.
+void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode);
 void Display_UI();
 
 void Display_720P90(int mode);

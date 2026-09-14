@@ -141,7 +141,7 @@ static lv_obj_t *page_source_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
-    create_select_item(arr, cont);
+    create_select_item(arr, cont, GRID_ROWS(row_dsc));
 
     label[0] = create_label_item(cont, "HDZero", 1, ROW_HDZERO, 3);
     snprintf(buf, sizeof(buf), "%s", _lang("Analog"));
@@ -244,7 +244,28 @@ void source_status_timer() {
     }
 }
 
+// The recorder is configured for the source it was started on, and a source
+// change rewrites that configuration under it: app_switch_to_analog() and the
+// two after it call dvr_update_vi_conf() themselves. Nothing stopped the
+// recording first, so a file that was open across a source change carried on
+// as a 720p HDZero recording of whatever the other input was putting out --
+// grey, green, geometry from neither. Seen on the goggles as hdz_0052.ts.
+//
+// Stop it, and wait for the file to be closed before the video goes: a
+// deferred stop is a record process still writing.
+static void source_stop_recording(void) {
+    dvr_cmd(DVR_STOP);
+
+    // Waiting for the file to be closed is what the tail of the recording is
+    // worth, against up to two seconds of the goggles not answering the
+    // button. Only ever spent on a recording under three seconds old, so it
+    // is the user's call and off by default.
+    if (g_setting.bugfix.wait_for_recording)
+        dvr_collect_stop();
+}
+
 static void page_source_select_hdzero() {
+    source_stop_recording();
     progress_bar.start = 1;
     app_switch_to_hdzero(true);
     app_state_push(APP_STATE_VIDEO);
@@ -253,12 +274,15 @@ static void page_source_select_hdzero() {
     dvr_enable_line_out(true);
 }
 
-static void page_source_select_hdmi() {
-    if (g_source_info.hdmi_in_status)
+static void page_source_select_hdmi_in() {
+    if (g_source_info.hdmi_in_status) {
+        source_stop_recording();
         app_switch_to_hdmi_in();
+    }
 }
 
 static void page_source_select_av_in() {
+    source_stop_recording();
     app_switch_to_analog(1);
     app_state_push(APP_STATE_VIDEO);
     g_source_info.source = SOURCE_AV_IN;
@@ -267,6 +291,7 @@ static void page_source_select_av_in() {
 }
 
 static void page_source_select_analog() {
+    source_stop_recording();
     app_switch_to_analog(0);
     app_state_push(APP_STATE_VIDEO);
     g_source_info.source = SOURCE_AV_MODULE;
@@ -298,7 +323,7 @@ void source_cycle() {
     switch (g_source_info.source) {
     case SOURCE_HDZERO:
         if (g_source_info.hdmi_in_status) {
-            page_source_select_hdmi();
+            page_source_select_hdmi_in();
         } else {
             page_source_select_av_in();
         }
@@ -316,6 +341,35 @@ void source_cycle() {
     Analog_Module_Power(0);
 }
 
+// Narrow halves the RF bandwidth: less range, but neighbouring channels
+// interfere less. It is an HDZero setting, so on any other source this only
+// records the choice for the next time HDZero comes up.
+//
+// The picture has to be rebuilt, because the bandwidth is set inside the
+// tuner init that app_switch_to_hdzero() runs; HDZero_open() sees the change
+// and closes and reopens the receivers itself.
+void source_toggle_hdzero_bw() {
+    g_setting.source.hdzero_bw = (g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_WIDE)
+                                     ? SETTING_SOURCES_HDZERO_BW_NARROW
+                                     : SETTING_SOURCES_HDZERO_BW_WIDE;
+    ini_putl("source", "hdzero_bw", g_setting.source.hdzero_bw, SETTING_INI);
+    // The switch this causes is otherwise indistinguishable in the log from a
+    // channel change, and this fork is read from its logs.
+    LOGI("hdzero bw: %s", g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_NARROW ? "narrow" : "wide");
+
+    // Keep the row on this page in step. Before the page is built its button
+    // group holds no buttons, and this is then a no-op.
+    btn_group_set_sel(&btn_group1, g_setting.source.hdzero_bw);
+
+    if (g_source_info.source == SOURCE_HDZERO) {
+        // The bandwidth is set inside the tuner init, so this closes the
+        // receivers for the best part of a second. A recording still being
+        // finalised would take all of that.
+        source_stop_recording();
+        app_switch_to_hdzero(true);
+    }
+}
+
 static void page_source_on_click(uint8_t key, int sel) {
     switch (sel) {
     case ROW_HDZERO:
@@ -325,7 +379,7 @@ static void page_source_on_click(uint8_t key, int sel) {
         page_source_select_analog();
         break;
     case ROW_HDMI:
-        page_source_select_hdmi();
+        page_source_select_hdmi_in();
         break;
     case ROW_AV:
         page_source_select_av_in();

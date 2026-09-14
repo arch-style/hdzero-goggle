@@ -19,6 +19,28 @@ typedef struct {
     int analog_channel;
 } setting_scan_t;
 
+#define FAVORITES_MAX 8
+
+typedef struct {
+    bool enable;
+    // How many of the slots below are in use, 1..FAVORITES_MAX.
+    uint8_t count;
+    // 0 marks an empty slot, otherwise a 1-based channel index. What the index
+    // means depends on which list this is: a channel within the currently
+    // selected band for HDZero, one of the 48 analog channels for analog.
+    uint8_t channel[FAVORITES_MAX];
+} setting_favorites_list_t;
+
+#define FAVORITES_INI_HDZERO "favorites"
+#define FAVORITES_INI_ANALOG "favorites_analog"
+
+typedef struct {
+    // Kept apart because the same index means different channels on each
+    // source: 4 is R4 on HDZero and A4 on analog.
+    setting_favorites_list_t hdzero;
+    setting_favorites_list_t analog;
+} setting_favorites_t;
+
 typedef enum {
     SETTING_AUTOSCAN_STATUS_ON = 0,
     SETTING_AUTOSCAN_STATUS_LAST = 1,
@@ -232,7 +254,206 @@ typedef struct {
 
 typedef struct {
     uint8_t no_dial; // 1=disable turning channels under video mode
+    // 1=keep the HDZero tuner configured while the menu is open instead of
+    // resetting it, so returning to video skips DM6302_init(). Costs power:
+    // the tuner stays alive for as long as the menu is up.
 } ease_use_t;
+
+typedef struct {
+    // Keep the HDZero tuner configured while the menu is open instead of
+    // resetting it, so returning to video skips DM6302_init(), measured at
+    // 2.3s. The tuner stays powered for as long as the menu is up.
+    bool fast_menu;
+    // Draw the menu over the running video instead of handing the display to
+    // the UI layer, which is what forces the 1.1s dispw call in both
+    // directions. The menu is laid out for 1080p, so it is cropped whenever
+    // the video is not.
+    bool keep_display;
+    // Skip re-running audio_sel.sh when the mixer already holds the state
+    // being asked for. It forks amixer once per control, twelve times for an
+    // input change, and the switch path asks for the same state every time.
+    bool skip_audio;
+    // Skip configuring the display for the menu at boot. The app sets 1080p50
+    // for the UI and then immediately sets the video timing, paying dispw
+    // twice; the boot UI then shows at whatever mode the kernel left.
+    bool boot_display;
+    // Do not show the menu while starting up. It is created visible and
+    // nothing hides it: what covers it once video starts is the OSD screen,
+    // created later and drawn on top. Until then it is simply on screen.
+    bool skip_boot_menu;
+    // Bring the motion sensor up on a worker thread. It is 686ms of I2C in
+    // device_init(), on the way to a picture, and nothing before the head
+    // tracker actually runs needs it.
+    bool async_imu;
+    // Start the display timing change before the tuner init rather than after
+    // it. dispw drives the SoC's display output and the tuner init is I2C to
+    // the FPGA, so the two have no reason to be serialised, but between them
+    // they are most of the time to a picture.
+    bool async_display;
+    // Read the OSD font bitmaps on a worker thread started before the display
+    // and tuner are brought up, so the file I/O overlaps with them.
+    bool boot_fonts;
+    // Run the status bar and source status refresh at 20Hz instead of once per
+    // main loop pass. They rewrite their labels every time, and a rewrite
+    // invalidates them whether the text changed or not.
+    bool ui_throttle;
+    // Only write a label or image when its content actually changed.
+    // lv_label_set_text() invalidates unconditionally, and the status bar
+    // rewrites every field on every pass, so an idle bar was redrawing
+    // constantly for nothing.
+    bool label_diff;
+    // Decide a long press by elapsed time rather than by counting the key
+    // repeat events the kernel happens to send, which ties the feel of the
+    // button to the autorepeat rate.
+    bool timed_long_press;
+    // Take and release lvgl_mutex around each stage of the main loop instead
+    // of once around all of them, so the input handlers get several chances
+    // to run per pass instead of waiting for the whole batch.
+    bool split_lock;
+    // Turn LVGL's antialiasing off while the scaled menu is up, and put it
+    // back on the way out. Antialiasing is what makes the scaled menu heavy:
+    // a transformed object is resampled bilinearly with it and by nearest
+    // neighbour without. The flag itself is global, so it is scoped to the
+    // menu here rather than left off over video and the OSD.
+    bool menu_antialias_off;
+    // Bring the HDZero tuner up on a worker started right after the devices,
+    // when start-up is heading straight to HDZero video. DM6302_init() is
+    // 1.8s of I2C to the FPGA and used to wait behind the whole UI build.
+    // While it runs the main I2C bus is at the 1MHz the init asks for, so the
+    // OLED and display set-up of the boot phase run at that speed too.
+    bool async_tuner;
+    // Send the seven FPGA register writes of one tuner SPI write as a single
+    // I2C transaction instead of seven. Falls back to seven if the ioctl is
+    // refused. Speeds up every DM6302_init() and channel change.
+    bool spi_burst;
+    // Which clock the main I2C bus runs at while the tuner is initialised.
+    // Stock raises it from 200kHz to what its comment calls 1MHz and the
+    // divider actually makes 1.2MHz -- over the I2C Fast-mode Plus ceiling,
+    // over Allwinner's own 400kHz for the controller, and where the FPGA has
+    // been measured not keeping up (five second transfers, one antenna dead).
+    // 0 = stock 1.2MHz, 1 = 800kHz, the fastest value inside the spec,
+    // 2 = do not raise it at all, which is what upstream does since 9.6.
+    // Read at each tuner init, so it can be compared without a restart.
+    uint8_t tuner_bus;
+    // Ask for a 40% SCL duty (a longer LOW) during the init instead of 50%.
+    // Only where the SoC has the bit, which iic_init() finds out.
+    bool tuner_bus_duty40;
+    // Do not run wlan_stop.sh at start-up when the WiFi driver is not loaded.
+    // The script sleeps a second and then kills things that are not running,
+    // and it blocks the main loop for 1.08s right after the picture appears.
+    bool skip_wifi_stop;
+    // Start the video timing change at start-up rather than at the switch.
+    // dispw is 1.1s and it is the last thing the switch waits for, so run it
+    // during the UI build instead. Needs Skip Display Setup (else the menu's
+    // own timing runs a second dispw) and Skip Boot Menu (the panel stays
+    // dark until the video arrives instead of lighting mid-reconfiguration).
+    bool boot_display_early;
+    // Build the menu pages after the video instead of before it. Nothing
+    // needs them until someone opens the menu. Worth less than the 976ms it
+    // moves, because what it exposes is the wait for the OSD fonts and then
+    // the tuner and dispw underneath; the font preload is started earlier to
+    // keep the first of those small.
+    bool defer_menu;
+    // Read both tuner chips' factory calibration in one walk instead of one
+    // chip at a time. SPI_Read already returns both and a broadcast write
+    // addresses both, so the per-chip version was doing the whole walk twice.
+    // Both paths log a fingerprint of what they read, so the fast one can be
+    // checked against the slow one: same number, same calibration.
+    bool fast_efuse;
+    // Wait for the record process to actually finish stopping instead of
+    // sleeping a flat two seconds. dvr_cmd(DVR_STOP) runs on the menu switch
+    // with lvgl_mutex held, so nothing is drawn for those two seconds and the
+    // menu appears that much after the button. The record process writes its
+    // status to /tmp/record.dat after it has closed the file, which is the
+    // same guarantee the sleep was buying; the two seconds stay as the cap.
+    bool dvr_stop_wait;
+    // The same for the start. dvr_cmd(DVR_START) holds dvr_mutex across its
+    // sleep, and the switch path wants that mutex for dvr_update_vi_conf(),
+    // so the auto start that follows a signal on the peripheral thread can
+    // stall the menu switch as well as itself.
+    bool dvr_start_wait;
+    // Ask for the menu's 1080p50 timing at the top of the switch to the menu
+    // instead of in the middle of Display_UI(), so the recorder stop, the
+    // audio mute and the live stop run beside dispw rather than in front of
+    // it. Display_UI() collects the timing where it would have started it.
+    // The panel blanks at the button press rather than after the recorder
+    // has stopped.
+    bool menu_async_display;
+    // Do not wait for the record process to close its file at all: ask it to
+    // stop and carry on. Measured on the goggles, it will not finalise a
+    // recording until about three seconds after it started, so a stop sooner
+    // than that waits out the remainder -- which is the pause on a channel
+    // change, and on going to the menu straight after the picture arrives.
+    // The wait moves to the next start, the one thing that needs the old file
+    // closed. What runs in between is the channel change and the display
+    // timing, which are not the recorder's.
+    bool dvr_defer_stop;
+} setting_speed_t;
+
+typedef struct {
+    // DM6302_init() gives up after ten tries and says so, but HDZero_open()
+    // marked the tuner open regardless, so the app believed unconfigured
+    // receivers were fine and nothing ever tried again. On means a failed
+    // init leaves the tuner closed, and the next switch initialises it.
+    bool retry_tuner_init;
+    // A source change stops the recorder, which is the fix for a recording
+    // carrying on across it. The record process does not close the file when
+    // told to, though: it finalises about three seconds after the recording
+    // started, and takes frames until it does. On also waits for that, so the
+    // tail of the file cannot be the picture the switch moved away from.
+    //
+    // The wait is the remainder of those three seconds, so it is zero for
+    // anything recorded for longer -- every real flight. What it costs is up
+    // to two seconds of the goggles not answering, to protect a clip under
+    // three seconds long. Off by default for that reason: the fix that
+    // matters is the stop, and it is not optional.
+    bool wait_for_recording;
+    // A transfer on the main I2C bus has been measured taking 5006ms and then
+    // succeeding: one lost interrupt, the driver's own timeout, a controller
+    // reset, and a retry that worked. Five seconds is the kernel's default
+    // for this adapter, and the bus lock is held for all of it, so everything
+    // else on the port stops too -- seen as the goggles freezing mid-switch.
+    //
+    // On sets the adapter's timeout to 500ms. Nothing here needs anything
+    // like that long: the largest transaction is a few hundred bits, a
+    // millisecond at the slowest speed the bus runs. The recovery is the
+    // same, it just starts ten times sooner.
+    bool short_i2c_timeout;
+    // A right button press is read on the UART thread, and the action it
+    // starts -- a source switch, say -- runs on that same thread, so presses
+    // made while it runs are queued behind it, not lost. Stock then acts on
+    // them: two queued presses become a double click, which is Go Sleep by
+    // default. Seen in the field as "the first press did nothing, and the
+    // second turned the screen off".
+    //
+    // On drops right button presses that arrived during an action that took
+    // longer than 250ms.
+    bool drop_queued_presses;
+    // Give Up Auto DVR. After a few starts in a row that the record process
+    // abandons at once -- a card the kernel has turned read-only, typically --
+    // stop starting it again for this boot and say why on the OSD. Stock
+    // retries every few seconds for as long as there is a picture, and shows
+    // nothing.
+    bool dvr_give_up;
+} setting_bugfix_t;
+
+typedef struct {
+    // Beep on every recognised button press: the dial button short and long,
+    // and the right button. A long press gets a longer beep so the two are
+    // distinguishable by ear.
+    bool button_beep;
+    // Beep on every dial step. Short, because the dial turns quickly.
+    bool dial_beep;
+    // How long a press has to be held to count as long, when Timed Long Press
+    // is on. One of LONG_PRESS_CHOICES.
+    uint16_t long_press_ms;
+} setting_input_t;
+
+// Offered on the settings page as a slider, longest first.
+#define LONG_PRESS_CHOICE_NUM 6
+extern const uint16_t long_press_choices[LONG_PRESS_CHOICE_NUM];
+// Position of ms in that list, or -1 if it is not one of them.
+int long_press_choice_index(uint16_t ms);
 
 typedef enum {
     SETTING_SOURCES_ANALOG_MODULE_INTERNAL = 0,
@@ -291,6 +512,10 @@ typedef struct {
 
 typedef struct {
     setting_scan_t scan;
+    setting_favorites_t favorites;
+    setting_speed_t speed;
+    setting_input_t input;
+    setting_bugfix_t bugfix;
     setting_fan_t fans;
     setting_autoscan_t autoscan;
     setting_power_t power;

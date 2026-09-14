@@ -43,6 +43,9 @@ typedef struct {
     lv_obj_t *latency_lock[2];
     lv_obj_t *channel[2];
     lv_obj_t *sd_rec[2];
+    // Why the automatic recording stopped trying, beside sd_rec. Give Up Auto
+    // DVR only; hidden otherwise.
+    lv_obj_t *dvr_fault[2];
     lv_obj_t *vlq[2];
     lv_obj_t *ant0[2];
     lv_obj_t *ant1[2];
@@ -98,6 +101,9 @@ void osd_show(bool show);
 void osd_update_element_positions();
 char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel);
 void load_fc_osd_font(uint8_t);
+// Start reading the OSD fonts in the background; call before the slow parts
+// of boot so the file I/O overlaps with them.
+void osd_font_prefetch_start(void);
 void *thread_osd(void *ptr);
 void osd_resource_path(char *buf, const char *fmt, osd_resource_t osd_resource_type, ...);
 void osd_toggle();

@@ -1,13 +1,20 @@
 #include "time.h"
 
-#include <sys/time.h>
 #include <time.h>
 
-uint32_t time_ms() {
-    struct timeval tv_now;
-    gettimeofday(&tv_now, NULL);
+// Monotonic, not wall-clock: rtc_init() sets the system clock a fraction of a
+// second into start-up, jumping it from 1970 to the present. Measured with
+// gettimeofday() that made the boot total wrap to four billion milliseconds,
+// and any interval spanning a later RTC or NTP adjustment would be off too.
+static uint64_t monotonic_ms(void) {
+    struct timespec ts;
 
-    const uint64_t now_ms = (tv_now.tv_sec * 1000000 + tv_now.tv_usec) / 1000;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+uint32_t time_ms() {
+    const uint64_t now_ms = monotonic_ms();
 
     static uint64_t start_ms = 0;
     if (start_ms == 0) {
@@ -18,10 +25,7 @@ uint32_t time_ms() {
 }
 
 uint32_t time_s() {
-    struct timeval tv_now;
-    gettimeofday(&tv_now, NULL);
-
-    const uint64_t now_s = tv_now.tv_sec;
+    const uint64_t now_s = monotonic_ms() / 1000;
 
     static uint64_t start_s = 0;
     if (start_s == 0) {

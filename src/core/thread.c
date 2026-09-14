@@ -71,6 +71,7 @@ static void detect_sdcard(void) {
             } else if (!g_sdcard_enable && sdcard_enable_last) {
                 g_sdcard_ready = false;
                 sdcard_init_scan = true;
+                dvr_card_removed();
             }
 
             if (record_pending && g_sdcard_ready && !sdcard_is_full()) {
@@ -182,7 +183,7 @@ static void check_source_signal(int vtmg_change) {
             }
         } else
             cnt = 0;
-    } else { // not in-recording
+    } else if (!dvr_auto_is_halted()) { // not in-recording
         if (is_valid) {
             cnt++;
             if (cnt >= SIGNAL_ACCQ_DURATION_THR) {
@@ -199,6 +200,7 @@ static void check_source_signal(int vtmg_change) {
 }
 
 static void *thread_peripheral(void *ptr) {
+    log_thread_id("peripheral");
     int record_vtmg_change = 0;
     int j = 0, k = 0;
 

@@ -43,6 +43,12 @@ extern progress_bar_t progress_bar;
 void main_menu_init();
 void main_menu_update();
 void main_menu_show(bool is_show);
+// Re-resolve the antialias flag after the setting behind it changed.
+void main_menu_apply_antialiasing(void);
+// Re-fit the menu to the display. For anything that changes the resolution
+// while the menu is already on screen; main_menu_show() covers the rest.
+void main_menu_refit_display(void);
+void main_menu_move_behind_osd(void);
 bool main_menu_is_shown(void);
 
 void menu_nav(uint8_t key);

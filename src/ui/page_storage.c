@@ -9,6 +9,8 @@
 #include "../conf/ui.h"
 
 #include "core/common.hh"
+#include "core/dvr.h"
+#include "core/settings.h"
 #include "lang/language.h"
 #include "record/record_definitions.h"
 #include "ui/page_common.h"
@@ -305,6 +307,10 @@ static repair_codes_t page_storage_repair_sd() {
 
     page_storage.is_sd_repair_active = false;
 
+    // The card was unmounted and mounted again: if the recorder had given
+    // up on it, that is over.
+    dvr_card_removed();
+
     return status;
 }
 
@@ -411,7 +417,7 @@ static lv_obj_t *page_storage_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
-    create_select_item(arr, cont);
+    create_select_item(arr, cont, GRID_ROWS(row_dsc));
 
     create_btn_group_item(&page_storage.logging, cont, 2, _lang("Logging"), _lang("On"), _lang("Off"), "", "", 0);
     btn_group_set_sel(&page_storage.logging, g_setting.storage.logging ? 0 : 1);

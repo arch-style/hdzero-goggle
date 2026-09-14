@@ -28,6 +28,7 @@
 #include "core/app_state.h"
 #include "core/dvr.h"
 #include "core/elrs.h"
+#include "core/favorites.h"
 #include "core/settings.h"
 #include "core/sleep_mode.h"
 #include "driver/beep.h"
@@ -50,6 +51,8 @@
 #include "ui/ui_main_menu.h"
 #include "ui/ui_osd_element_pos.h"
 #include "ui/ui_porting.h"
+#include "util/time.h"
+#include "util/system.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Tune channel on video mode
@@ -59,6 +62,28 @@ static uint8_t tune_state = 0; // 0=init; 1=waiting for key; 2=tuning
 static uint16_t tune_timer = 0;
 
 #define EPOLL_FD_CNT 4
+
+// A dial step is much shorter than a press, because the dial turns quickly and
+// 50ms of beep per detent would run into the next one.
+#define BEEP_DIAL 15
+
+// Audible confirmation that an input registered. beep_dur() hands the work to
+// its own thread, so none of these hold up the input loop. Three lengths, so
+// a short press, a long press and a dial step are told apart by ear alone.
+static void input_click_feedback(void) {
+    if (g_setting.input.button_beep)
+        beep_dur(BEEP_SHORT);
+}
+
+static void input_long_press_feedback(void) {
+    if (g_setting.input.button_beep)
+        beep_dur(BEEP_LONG);
+}
+
+static void input_dial_feedback(void) {
+    if (g_setting.input.dial_beep)
+        beep_dur(BEEP_DIAL);
+}
 
 static int epfd;
 static pthread_t input_device_pid;
@@ -126,16 +151,25 @@ void tune_channel(uint8_t action) {
     else
         return;
 
+    // With favorites on, the dial cycles the registered channels only.
+    // favorites_active() picks the list matching the source we are tuning;
+    // any source that reaches here has one.
+    bool use_favorites = favorites_active();
+
     switch (action) {
     case DIAL_KEY_UP: // Tune up
-        if (channel == channel_num)
+        if (use_favorites)
+            channel = favorites_step(channel, 1);
+        else if (channel >= channel_num)
             channel = 1;
         else
             channel++;
         break;
 
     case DIAL_KEY_DOWN: // Tune down
-        if (channel == 1)
+        if (use_favorites)
+            channel = favorites_step(channel, -1);
+        else if (channel == 1)
             channel = channel_num;
         else
             channel--;
@@ -196,6 +230,21 @@ void tune_channel_confirm() {
         tune_channel(DIAL_KEY_CLICK);
     }
 #endif
+}
+
+// A button doing in one press what the dial does with a turn and a click:
+// step one channel and tune to it straight away. They go through
+// tune_channel(), so the favourites list, the band limits and the channel OSD
+// are the dial's, and so is the no_dial lock -- with channel changes turned
+// off in video mode, these buttons are off too.
+void tune_channel_next() {
+    tune_channel(DIAL_KEY_UP);
+    tune_channel(DIAL_KEY_CLICK);
+}
+
+void tune_channel_prev() {
+    tune_channel(DIAL_KEY_DOWN);
+    tune_channel(DIAL_KEY_CLICK);
 }
 
 void tune_channel_timer() {
@@ -364,6 +413,12 @@ void rbtn_click(right_button_t click_type) {
     if (g_app_state == APP_STATE_USER_INPUT_DISABLED)
         return;
 
+    // The right button is a press like any other, so it gets the same beep.
+    if (click_type == RIGHT_LONG_PRESS)
+        input_long_press_feedback();
+    else
+        input_click_feedback();
+
     if (scroll_sim_mode) {
         switch (click_type) {
         case RIGHT_LONG_PRESS:
@@ -440,6 +495,8 @@ static void roller_up(void) {
     if (g_app_state == APP_STATE_USER_INPUT_DISABLED)
         return;
 
+    input_dial_feedback();
+
     pthread_mutex_lock(&lvgl_mutex);
     autoscan_exit();
     if (g_app_state == APP_STATE_MAINMENU) // main menu
@@ -475,6 +532,8 @@ static void roller_down(void) {
     if (g_app_state == APP_STATE_USER_INPUT_DISABLED)
         return;
 
+    input_dial_feedback();
+
     pthread_mutex_lock(&lvgl_mutex);
     autoscan_exit();
     if (g_app_state == APP_STATE_MAINMENU) {
@@ -501,6 +560,8 @@ static void get_event(int fd) {
     struct input_event event;
     static int event_type_last = 0;
     static int btn_press_time = 0;
+    static uint32_t btn_down_ms = 0;
+    static bool btn_long_fired = false;
 
     static int roller_value = 0;
 
@@ -547,9 +608,37 @@ static void get_event(int fd) {
                     // LOGI("discard EV_SYN");
                 }
             } else if (event_type_last == EV_KEY) {
-                if (btn_value) {
+                if (g_setting.speed.timed_long_press && !g_setting.ease.no_dial) {
+                    // The stock rule counts the key repeats the kernel sends
+                    // while the button is held and fires on the tenth, so how
+                    // long a long press takes is really the autorepeat rate.
+                    // Time it instead. The repeats are still what brings us
+                    // back here to check, but they no longer set the
+                    // threshold. Equality on the count also meant a missed
+                    // tenth event lost the press entirely; a flag cannot.
+                    if (btn_value) {
+                        if (btn_down_ms == 0)
+                            btn_down_ms = time_ms();
+
+                        if (!btn_long_fired && (time_ms() - btn_down_ms) >= g_setting.input.long_press_ms) {
+                            btn_long_fired = true;
+                            input_long_press_feedback();
+                            btn_press();
+                            g_key = DIAL_KEY_PRESS;
+                        }
+                    } else {
+                        if (!btn_long_fired && btn_down_ms != 0) {
+                            input_click_feedback();
+                            btn_click();
+                            g_key = DIAL_KEY_CLICK;
+                        }
+                        btn_down_ms = 0;
+                        btn_long_fired = false;
+                    }
+                } else if (btn_value) {
                     if (!g_setting.ease.no_dial) {
                         if (btn_press_time == 10) {
+                            input_long_press_feedback();
                             btn_press();
                             g_key = DIAL_KEY_PRESS;
                         }
@@ -568,19 +657,15 @@ static void get_event(int fd) {
                 } else {
                     if (scroll_sim_mode_pending) {
                         scroll_sim_mode_pending = false;
-                    } else {
-                        if (scroll_sim_mode_repeat == SCROLL_REPEAT_NONE) {
-                            if (btn_press_time < 10) {
-                                btn_click();
-                                g_key = DIAL_KEY_CLICK;
-                            } else if (g_setting.ease.no_dial) {
-                                if (btn_press_time < 50) {
-                                    btn_press();
-                                    g_key = DIAL_KEY_PRESS;
-                                }
-                                // else if(btn_press_time > 200){
-                                //	btn_super_press();
-                                // }
+                    } else if (scroll_sim_mode_repeat == SCROLL_REPEAT_NONE) {
+                        if (btn_press_time < 10) {
+                            input_click_feedback();
+                            btn_click();
+                            g_key = DIAL_KEY_CLICK;
+                        } else if (g_setting.ease.no_dial) {
+                            if (btn_press_time < 50) {
+                                btn_press();
+                                g_key = DIAL_KEY_PRESS;
                             }
                         }
                     }
@@ -646,6 +731,7 @@ static void add_to_epfd(int epfd, int fd) {
 }
 
 static void *thread_input_device(void *ptr) {
+    log_thread_id("input");
 #ifndef EMULATOR_BUILD
     for (;;) {
         struct epoll_event events[EPOLL_FD_CNT];

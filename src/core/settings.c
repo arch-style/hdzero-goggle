@@ -1,7 +1,11 @@
 #include "settings.h"
 
+#include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -11,18 +15,45 @@
 
 #include "core/self_test.h"
 #include "lang/language.h"
+#include "driver/dm6302.h"
 #include "ui/page_common.h"
 #include "ui/page_scannow.h"
 #include "util/filesystem.h"
 #include "util/system.h"
+#include "util/time.h"
 
 #define SETTINGS_INI_VERSION_UNKNOWN 0
 
 setting_t g_setting;
 
+// Slowest first, so an index that was saved before a value was added still
+// means the same time.
+const uint16_t long_press_choices[LONG_PRESS_CHOICE_NUM] = {500, 400, 300, 200, 100, 50};
+
+int long_press_choice_index(uint16_t ms) {
+    for (int i = 0; i < LONG_PRESS_CHOICE_NUM; i++) {
+        if (long_press_choices[i] == ms)
+            return i;
+    }
+
+    return -1;
+}
+
 const setting_t g_setting_defaults = {
     .scan = {
         .channel = 1,
+    },
+    .favorites = {
+        .hdzero = {
+            .enable = false,
+            .count = 4,
+            .channel = {0, 0, 0, 0, 0, 0, 0, 0},
+        },
+        .analog = {
+            .enable = false,
+            .count = 4,
+            .channel = {0, 0, 0, 0, 0, 0, 0, 0},
+        },
     },
     .fans = {
         .top_speed = 4,
@@ -88,6 +119,45 @@ const setting_t g_setting_defaults = {
     },
     .ease = {
         .no_dial = 0,
+    },
+    .speed = {
+        .fast_menu = false,
+        .keep_display = false,
+        .skip_audio = false,
+        .boot_display = false,
+        .boot_fonts = false,
+        .skip_boot_menu = false,
+        .async_imu = false,
+        .async_display = false,
+        .ui_throttle = false,
+        .label_diff = false,
+        .timed_long_press = false,
+        .split_lock = false,
+        .menu_antialias_off = false,
+        .async_tuner = false,
+        .spi_burst = false,
+        .tuner_bus = 0,
+        .tuner_bus_duty40 = false,
+        .skip_wifi_stop = false,
+        .boot_display_early = false,
+        .defer_menu = false,
+        .fast_efuse = false,
+        .dvr_stop_wait = false,
+        .dvr_start_wait = false,
+        .menu_async_display = false,
+        .dvr_defer_stop = false,
+    },
+    .bugfix = {
+        .retry_tuner_init = false,
+        .wait_for_recording = false,
+        .short_i2c_timeout = false,
+        .drop_queued_presses = false,
+        .dvr_give_up = false,
+    },
+    .input = {
+        .button_beep = false,
+        .dial_beep = false,
+        .long_press_ms = 500,
     },
     .osd = {
         .orbit = 2,
@@ -241,6 +311,37 @@ const setting_t g_setting_defaults = {
     .has_all_features = true,
 };
 
+// channel_max is the width of the name table channel2str() indexes for this
+// list, not what the current band happens to offer: a slot registered on
+// Raceband is still a legal 12 while Lowband is selected, and slot_usable()
+// is what decides whether it can be tuned to. Anything past the table is a
+// hand-edited setting.ini, and channel2str() indexes straight into the table,
+// so it has to be turned into an empty slot here rather than trusted.
+static void settings_load_favorites(setting_favorites_list_t *list, const setting_favorites_list_t *defaults,
+                                    const char *section, uint8_t channel_max) {
+    list->enable = settings_get_bool((char *)section, "enable", defaults->enable);
+
+    list->count = ini_getl(section, "count", defaults->count, SETTING_INI);
+    if ((list->count < 1) || (list->count > FAVORITES_MAX))
+        list->count = defaults->count;
+
+    for (int i = 0; i < FAVORITES_MAX; i++) {
+        char key[8];
+        long ch;
+
+        snprintf(key, sizeof(key), "ch%d", i + 1);
+        ch = ini_getl(section, key, defaults->channel[i], SETTING_INI);
+
+        // 0 is the empty slot and is always legal.
+        if ((ch < 0) || (ch > channel_max)) {
+            LOGW("%s: %s=%ld is out of range, slot left empty", section, key, ch);
+            ch = 0;
+        }
+
+        list->channel[i] = (uint8_t)ch;
+    }
+}
+
 int settings_put_osd_element_shown(bool show, char *config_name) {
     char setting_key[128];
 
@@ -338,6 +439,111 @@ void settings_init(void) {
         settings_reset();
 }
 
+// One file per finished boot in APP_LOG_DIR, numbered upwards, and the number
+// never goes back: the newest boot takes the highest number seen plus one, and
+// anything more than APP_LOG_KEEP behind it is deleted. Nothing is renamed to
+// make room, which is the point -- a scheme that shifts .1 to .2 and so on
+// costs a rename per kept boot at every start-up, and this branch exists to
+// keep things off the boot path.
+//
+// Reads the sequence number back out of the file names rather than storing it
+// anywhere. A card carrying its own history needs no state on the goggles,
+// works when the card is swapped, and cannot disagree with what is there.
+static bool app_log_seq(const char *name, unsigned *seq) {
+    char tail;
+
+    // The %c is how the end of the string is checked: it must not match, so
+    // exactly one conversion is the whole name and nothing after it.
+    return sscanf(name, "HDZGOGGLE.%u.log%c", seq, &tail) == 1;
+}
+
+static bool rec_log_seq(const char *name, unsigned *seq) {
+    char tail;
+
+    return sscanf(name, "RECORD.%u.log%c", seq, &tail) == 1;
+}
+
+static unsigned app_log_newest(void) {
+    unsigned newest = 0, seq;
+    struct dirent *entry;
+    DIR *dir = opendir(APP_LOG_DIR);
+
+    if (!dir)
+        return 0;
+
+    while ((entry = readdir(dir)))
+        if (app_log_seq(entry->d_name, &seq) && seq > newest)
+            newest = seq;
+
+    closedir(dir);
+    return newest;
+}
+
+// By number rather than by counting files, so a log deleted by hand leaves a
+// gap instead of keeping an older one alive. Unlinking during the walk is
+// allowed to miss an entry -- the next boot sees it again.
+static void app_log_prune(unsigned oldest_kept) {
+    char path[160];
+    unsigned seq;
+    struct dirent *entry;
+    DIR *dir = opendir(APP_LOG_DIR);
+
+    if (!dir)
+        return;
+
+    while ((entry = readdir(dir))) {
+        if ((app_log_seq(entry->d_name, &seq) || rec_log_seq(entry->d_name, &seq)) && seq < oldest_kept) {
+            snprintf(path, sizeof(path), APP_LOG_DIR "/%s", entry->d_name);
+            unlink(path);
+        }
+    }
+
+    closedir(dir);
+}
+
+static void app_log_rotate(void) {
+    uint32_t started_ms = time_ms();
+    char path[160];
+    unsigned next;
+
+    mkdir(APP_LOG_DIR, 0777);
+
+    next = app_log_newest() + 1;
+
+    if (next > APP_LOG_KEEP)
+        app_log_prune(next - APP_LOG_KEEP);
+
+    // Once, on the first boot after the two-file scheme. It is the older of
+    // the two, so it goes in first and keeps that order.
+    if (fs_file_exists(APP_LOG_FILE_PREV)) {
+        snprintf(path, sizeof(path), APP_LOG_FILE_OLD, next++);
+        rename(APP_LOG_FILE_PREV, path);
+    }
+
+    snprintf(path, sizeof(path), APP_LOG_FILE_OLD, next);
+    rename(APP_LOG_FILE, path);
+    unlink(APP_LOG_FILE);
+
+    // The record process is already writing this boot's RECORD.log, opened
+    // by rc.sh before the app started. Renaming does not disturb that; it
+    // just puts the file where the next boot will not truncate it, numbered
+    // with this boot's own log. A fresh empty one keeps rc.sh redirecting.
+    if (fs_file_exists(REC_LOG_FILE)) {
+        snprintf(path, sizeof(path), REC_LOG_FILE_OLD, next + 1);
+        if (rename(REC_LOG_FILE, path) == 0) {
+            int fd = open(REC_LOG_FILE, O_WRONLY | O_CREAT, 0666);
+            if (fd >= 0)
+                close(fd);
+        }
+    }
+
+    // Two directory walks on the card, and this is the boot path. Silent
+    // unless it starts to cost something worth knowing about.
+    uint32_t took_ms = time_ms() - started_ms;
+    if (took_ms >= 20)
+        LOGI("log: rotate to %u took %ums", next, took_ms);
+}
+
 void settings_load(void) {
     // Start with a fully configured structure then update!
     memcpy(&g_setting, &g_setting_defaults, sizeof(g_setting));
@@ -360,9 +566,22 @@ void settings_load(void) {
     if (g_setting.scan.channel > HDZERO_CHANNEL_NUM) {
         g_setting.scan.channel = 1;
     }
-    if (g_setting.source.analog_channel > ANALOG_CHANNEL_NUM) {
-        g_setting.scan.channel = 33;
+    // This clamped scan.channel, which belongs to HDZero and had just been
+    // checked against its own limit two lines up; the analog channel it was
+    // meant to fix went through unchecked and straight into the 48 entry name
+    // table. Zero is out of range too: channel2str() indexes channel - 1.
+    if ((g_setting.source.analog_channel < 1) ||
+        (g_setting.source.analog_channel > ANALOG_CHANNEL_NUM)) {
+        g_setting.source.analog_channel = g_setting_defaults.source.analog_channel;
     }
+
+    // favorites
+    // The HDZero list keeps the original [favorites] section so lists
+    // registered before analog support survive the upgrade.
+    settings_load_favorites(&g_setting.favorites.hdzero, &g_setting_defaults.favorites.hdzero,
+                            FAVORITES_INI_HDZERO, BASE_CH_NUM);
+    settings_load_favorites(&g_setting.favorites.analog, &g_setting_defaults.favorites.analog,
+                            FAVORITES_INI_ANALOG, ANALOG_CHANNEL_NUM);
 
     // autoscan
     g_setting.autoscan.status = ini_getl("autoscan", "status", g_setting_defaults.autoscan.status, SETTING_INI);
@@ -485,6 +704,84 @@ void settings_load(void) {
     //  no dial under video mode
     g_setting.ease.no_dial = fs_file_exists(NO_DIAL_FILE);
 
+    // speed
+    g_setting.speed.fast_menu = settings_get_bool("speed", "fast_menu", g_setting_defaults.speed.fast_menu);
+    g_setting.speed.keep_display = settings_get_bool("speed", "keep_display", g_setting_defaults.speed.keep_display);
+    g_setting.speed.skip_audio = settings_get_bool("speed", "skip_audio", g_setting_defaults.speed.skip_audio);
+    g_setting.speed.boot_display = settings_get_bool("speed", "boot_display", g_setting_defaults.speed.boot_display);
+    g_setting.speed.boot_fonts = settings_get_bool("speed", "boot_fonts", g_setting_defaults.speed.boot_fonts);
+    g_setting.speed.skip_boot_menu = settings_get_bool("speed", "skip_boot_menu", g_setting_defaults.speed.skip_boot_menu);
+    g_setting.speed.async_imu = settings_get_bool("speed", "async_imu", g_setting_defaults.speed.async_imu);
+    g_setting.speed.async_display = settings_get_bool("speed", "async_display", g_setting_defaults.speed.async_display);
+    g_setting.speed.ui_throttle = settings_get_bool("speed", "ui_throttle", g_setting_defaults.speed.ui_throttle);
+    g_setting.speed.label_diff = settings_get_bool("speed", "label_diff", g_setting_defaults.speed.label_diff);
+    g_setting.speed.timed_long_press = settings_get_bool("speed", "timed_long_press", g_setting_defaults.speed.timed_long_press);
+    g_setting.speed.split_lock = settings_get_bool("speed", "split_lock", g_setting_defaults.speed.split_lock);
+    g_setting.speed.menu_antialias_off = settings_get_bool("speed", "menu_antialias_off", g_setting_defaults.speed.menu_antialias_off);
+    g_setting.speed.async_tuner = settings_get_bool("speed", "async_tuner", g_setting_defaults.speed.async_tuner);
+    g_setting.speed.spi_burst = settings_get_bool("speed", "spi_burst", g_setting_defaults.speed.spi_burst);
+    g_setting.speed.skip_wifi_stop = settings_get_bool("speed", "skip_wifi_stop", g_setting_defaults.speed.skip_wifi_stop);
+    g_setting.speed.tuner_bus = ini_getl("speed", "tuner_bus", g_setting_defaults.speed.tuner_bus, SETTING_INI);
+    if (g_setting.speed.tuner_bus > 2)
+        g_setting.speed.tuner_bus = 0;
+    g_setting.speed.tuner_bus_duty40 = settings_get_bool("speed", "tuner_bus_duty40", g_setting_defaults.speed.tuner_bus_duty40);
+    g_setting.speed.boot_display_early = settings_get_bool("speed", "boot_display_early", g_setting_defaults.speed.boot_display_early);
+    g_setting.speed.defer_menu = settings_get_bool("speed", "defer_menu", g_setting_defaults.speed.defer_menu);
+    g_setting.speed.fast_efuse = settings_get_bool("speed", "fast_efuse", g_setting_defaults.speed.fast_efuse);
+    g_setting.speed.dvr_stop_wait = settings_get_bool("speed", "dvr_stop_wait", g_setting_defaults.speed.dvr_stop_wait);
+    g_setting.speed.dvr_start_wait = settings_get_bool("speed", "dvr_start_wait", g_setting_defaults.speed.dvr_start_wait);
+    g_setting.speed.menu_async_display = settings_get_bool("speed", "menu_async_display", g_setting_defaults.speed.menu_async_display);
+    g_setting.speed.dvr_defer_stop = settings_get_bool("speed", "dvr_defer_stop", g_setting_defaults.speed.dvr_defer_stop);
+
+    // input feedback
+    // bug fixes
+    g_setting.bugfix.retry_tuner_init = settings_get_bool("bugfix", "retry_tuner_init", g_setting_defaults.bugfix.retry_tuner_init);
+    g_setting.bugfix.wait_for_recording = settings_get_bool("bugfix", "wait_for_recording", g_setting_defaults.bugfix.wait_for_recording);
+    g_setting.bugfix.short_i2c_timeout = settings_get_bool("bugfix", "short_i2c_timeout", g_setting_defaults.bugfix.short_i2c_timeout);
+    g_setting.bugfix.drop_queued_presses = settings_get_bool("bugfix", "drop_queued_presses", g_setting_defaults.bugfix.drop_queued_presses);
+    g_setting.bugfix.dvr_give_up = settings_get_bool("bugfix", "dvr_give_up", g_setting_defaults.bugfix.dvr_give_up);
+    LOGI("bugfix: retry_tuner_init=%s wait_for_recording=%s short_i2c_timeout=%s drop_queued_presses=%s dvr_give_up=%s",
+         g_setting.bugfix.retry_tuner_init ? "on" : "off",
+         g_setting.bugfix.wait_for_recording ? "on" : "off",
+         g_setting.bugfix.short_i2c_timeout ? "on" : "off",
+         g_setting.bugfix.drop_queued_presses ? "on" : "off",
+         g_setting.bugfix.dvr_give_up ? "on" : "off");
+
+    g_setting.input.button_beep = settings_get_bool("input", "button_beep", g_setting_defaults.input.button_beep);
+    g_setting.input.dial_beep = settings_get_bool("input", "dial_beep", g_setting_defaults.input.dial_beep);
+    g_setting.input.long_press_ms = ini_getl("input", "long_press_ms", g_setting_defaults.input.long_press_ms, SETTING_INI);
+    if (long_press_choice_index(g_setting.input.long_press_ms) < 0)
+        g_setting.input.long_press_ms = g_setting_defaults.input.long_press_ms;
+    LOGI("speed: fast_menu=%s keep_display=%s skip_audio=%s boot_display=%s boot_fonts=%s skip_boot_menu=%s async_imu=%s async_display=%s ui_throttle=%s",
+         g_setting.speed.fast_menu ? "on" : "off",
+         g_setting.speed.keep_display ? "on" : "off",
+         g_setting.speed.skip_audio ? "on" : "off",
+         g_setting.speed.boot_display ? "on" : "off",
+         g_setting.speed.boot_fonts ? "on" : "off",
+         g_setting.speed.skip_boot_menu ? "on" : "off",
+         g_setting.speed.async_imu ? "on" : "off",
+         g_setting.speed.async_display ? "on" : "off",
+         g_setting.speed.ui_throttle ? "on" : "off");
+    LOGI("speed: label_diff=%s timed_long_press=%s split_lock=%s menu_antialias_off=%s async_tuner=%s spi_burst=%s skip_wifi_stop=%s",
+         g_setting.speed.label_diff ? "on" : "off",
+         g_setting.speed.timed_long_press ? "on" : "off",
+         g_setting.speed.split_lock ? "on" : "off",
+         g_setting.speed.menu_antialias_off ? "on" : "off",
+         g_setting.speed.async_tuner ? "on" : "off",
+         g_setting.speed.spi_burst ? "on" : "off",
+         g_setting.speed.skip_wifi_stop ? "on" : "off");
+    LOGI("speed: tuner_bus=%s tuner_bus_duty40=%s",
+         (const char *[]){"1.2MHz", "800kHz", "200kHz"}[g_setting.speed.tuner_bus],
+         g_setting.speed.tuner_bus_duty40 ? "on" : "off");
+    LOGI("speed: boot_display_early=%s defer_menu=%s fast_efuse=%s dvr_stop_wait=%s dvr_start_wait=%s menu_async_display=%s dvr_defer_stop=%s",
+         g_setting.speed.boot_display_early ? "on" : "off",
+         g_setting.speed.defer_menu ? "on" : "off",
+         g_setting.speed.fast_efuse ? "on" : "off",
+         g_setting.speed.dvr_stop_wait ? "on" : "off",
+         g_setting.speed.dvr_start_wait ? "on" : "off",
+         g_setting.speed.menu_async_display ? "on" : "off",
+         g_setting.speed.dvr_defer_stop ? "on" : "off");
+
     // storage
     g_setting.storage.logging = settings_get_bool("storage", "logging", g_setting_defaults.storage.logging);
 
@@ -505,7 +802,7 @@ void settings_load(void) {
             g_setting.storage.selftest = true;
         }
     } else if (g_setting.storage.logging) {
-        unlink(APP_LOG_FILE);
+        app_log_rotate();
         g_setting.storage.logging = log_file_open(APP_LOG_FILE);
     }
 

@@ -74,7 +74,7 @@ void init_bmi270()
     LOGI("init_bmi270 done.");
 }
 
-void enable_bmi270()
+bool enable_bmi270()
 {
     int8_t rslt;
     uint8_t sensor_list[2] = { BMI2_ACCEL, BMI2_GYRO };
@@ -85,10 +85,16 @@ void enable_bmi270()
     if (rslt == BMI2_OK) {
         rslt = bmi270_sensor_enable(sensor_list, 2, &bmi2_dev);
         bmi2_error_codes_print_result(rslt);
-        LOGI("[Pass] BMI270 enabled.");
+        /* The enable was reported and then thrown away, and "[Pass]" was
+           printed either way. It decides whether the sensor is readable. */
+        if (rslt == BMI2_OK) {
+            LOGI("[Pass] BMI270 enabled.");
+            return true;
+        }
     }
-    else
-        LOGE("[Error] BMI270 failed.");
+
+    LOGE("[Error] BMI270 failed.");
+    return false;
 }
 
 void disable_bmi270()

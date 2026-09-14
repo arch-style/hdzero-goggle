@@ -180,7 +180,7 @@ void recive_one_frame(uint8_t *uart_buf, uint8_t uart_buf_len) {
             break;
 
         } // switch(rx_state)
-    } // while(RS_ready1())
+    }     // while(RS_ready1())
 }
 
 void parser_rx(uint8_t function, uint8_t index, uint8_t *rx_buf) {
@@ -475,7 +475,45 @@ void clear_screen() {
     }
 }
 
+// Unlike the ELRS path, this protocol has no clear and no draw commit: rows
+// are overwritten as they arrive and anything not sent keeps its old content.
+// Whether that can strand text depends on something not visible from here --
+// whether the VTX repeats every row or only the ones that changed -- so
+// count what actually arrives instead of assuming. Nothing acts on this.
+static void osd_traffic_report(uint8_t row, bool changed) {
+    static uint32_t window_start_ms = 0;
+    static uint32_t rows_total = 0;
+    static uint32_t rows_changed = 0;
+    static uint32_t rows_seen_mask = 0;
+
+    uint32_t now = time_ms();
+
+    rows_total++;
+    if (changed)
+        rows_changed++;
+    if (row < 32)
+        rows_seen_mask |= (1u << row);
+
+    if (window_start_ms == 0)
+        window_start_ms = now;
+
+    if (now - window_start_ms < 5000)
+        return;
+
+    LOGI("osd rows in %ums: %u received, %u distinct, %u changed",
+         now - window_start_ms, rows_total, __builtin_popcount(rows_seen_mask), rows_changed);
+
+    window_start_ms = now;
+    rows_total = 0;
+    rows_changed = 0;
+    rows_seen_mask = 0;
+}
+
 void update_osd(uint16_t *line_buf, uint8_t row) {
+    bool changed = memcmp(fc_osd[row], line_buf, HD_HMAX * sizeof(uint16_t)) != 0;
+
+    osd_traffic_report(row, changed);
+
     memcpy(fc_osd[row], line_buf, HD_HMAX * sizeof(uint16_t));
     osd_signal_update();
 }

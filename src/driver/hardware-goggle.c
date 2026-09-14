@@ -1237,4 +1237,23 @@ int Get_HAN_status() // ret: 0=error; 1=ok
     return rdat;
 }
 
+
+// ---------------------------------------------------------------------------
+// The fast-switch fork's display-timing and tuner-standby machinery lives in
+// hardware-goggle2.c and has only been run on a Goggle 2. On this target the
+// same entry points exist so the common code links, but they fall back to the
+// stock behaviour: every timing change runs inline and standby is a close.
+bool vdpo_timing_applied(void) { return true; }
+bool vdpo_timing_pending(void) { return false; }
+bool vdpo_timing_running(void) { return false; }
+void vdpo_timing_collect(void) {}
+void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode) {
+    (void)tmg;
+    (void)mode;
+}
+bool HDZero_open_pending(void) { return false; }
+void HDZero_open_async_wait(void) {}
+void HDZero_open_async_start(int bw) { HDZero_open(bw); }
+void HDZero_Standby() { HDZero_Close(); }
+
 #endif

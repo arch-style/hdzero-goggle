@@ -25,8 +25,11 @@
 #include "core/input_device.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
+#include "core/settings.h"
 #include "driver/uart.h"
 #include "ui/page_common.h"
+#include "util/system.h"
+#include "util/time.h"
 
 /////////////////////////////////////////////////////////////////////
 // global
@@ -80,6 +83,36 @@ uint8_t uart_parse_core(uint8_t *buff, uint8_t *rptr, uint8_t *wptr, uint8_t *st
     return pkt_cnt;
 }
 
+// The right button's action runs on this thread, so any press made while it
+// runs is read afterwards, in the same burst of bytes. A press within this
+// long of the action ending can only have been one of those.
+#define RBTN_QUEUED_MS 50
+
+// After an action that took long enough for the user to have pressed again
+// meanwhile. Shorter ones cannot have queued anything a person meant.
+#define RBTN_SLOW_MS 250
+
+static uint32_t rbtn_busy_until = 0;
+
+static void rbtn_run(right_button_t click_type) {
+    uint32_t t0 = time_ms();
+
+    rbtn_click(click_type);
+
+    uint32_t took = time_ms() - t0;
+    if (took > RBTN_SLOW_MS) {
+        rbtn_busy_until = time_ms() + RBTN_QUEUED_MS;
+        LOGI("btn: action took %ums", took);
+    }
+}
+
+static bool rbtn_queued(void) {
+    if (!g_setting.bugfix.drop_queued_presses || rbtn_busy_until == 0)
+        return false;
+
+    return time_ms() < rbtn_busy_until;
+}
+
 void uart_parse(uint8_t sel, uint8_t *state, uint8_t *len, uint8_t *payload, uint8_t *payload_ptr) {
     uint8_t *uart_buf = sel ? uart_buffer[1] : uart_buffer[0];
     uint8_t *uart_buf_rptr = sel ? &uart_rptr[1] : &uart_rptr[0];
@@ -120,11 +153,13 @@ void uart_parse(uint8_t sel, uint8_t *state, uint8_t *len, uint8_t *payload, uin
             if (sel) {
                 g_key = RIGHT_KEY_CLICK + (ptr[2] & 1);
                 LOGI("btn:%x", ptr[2]); // 0=short,1=long
-                if (ptr[2]) {
-                    rbtn_click(RIGHT_LONG_PRESS);
+                if (rbtn_queued()) {
+                    LOGI("btn: pressed during the last action, ignored");
+                } else if (ptr[2]) {
+                    rbtn_run(RIGHT_LONG_PRESS);
                 } else if (wait_timeout != NULL) {
                     wait_timeout = NULL;
-                    rbtn_click(RIGHT_DOUBLE_CLICK);
+                    rbtn_run(RIGHT_DOUBLE_CLICK);
                 } else {
                     wait_timeout = &short_click_timeout;
                     wait_timeout->tv_usec = 250000;
@@ -151,6 +186,7 @@ void uart_parse(uint8_t sel, uint8_t *state, uint8_t *len, uint8_t *payload, uin
 }
 
 static void *pthread_recv_dm5680l(void *arg) {
+    log_thread_id("dm5680 left uart");
     int i, len = 0;
 
     uint8_t buffer[128];
@@ -189,6 +225,9 @@ static void *pthread_recv_dm5680l(void *arg) {
 }
 
 static void *pthread_recv_dm5680r(void *arg) {
+    // Also the right button: the select() timeout branch calls rbtn_click(),
+    // so everything a right button press does runs on this thread.
+    log_thread_id("dm5680 right uart");
     int i, len = 0;
 
     uint8_t buffer[128];
@@ -210,7 +249,7 @@ static void *pthread_recv_dm5680r(void *arg) {
         else if (fds == 0) {
             // Short click timeout
             wait_timeout = NULL;
-            rbtn_click(RIGHT_CLICK);
+            rbtn_run(RIGHT_CLICK);
         } else {
             len = uart_read(fd_dm5680r, buffer, 128);
             // if(len) LOGI("(UART2-%d)",len);

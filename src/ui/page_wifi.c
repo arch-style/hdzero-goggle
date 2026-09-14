@@ -281,6 +281,9 @@ static void page_wifi_mask_password(lv_obj_t *obj, int size) {
  *  Note: This function will be invoked asynchronously post bootup and may
  *        require additional APP_STATE checks to ensure integrity of execution.
  */
+// Set for the one call made from the post-bootup action.
+static bool booting = false;
+
 static void page_wifi_update_settings() {
     g_setting.wifi.enable = btn_group_get_sel(&page_wifi.page_1.enable.button) == 0;
     g_setting.wifi.mode = btn_group_get_sel(&page_wifi.page_1.mode.button);
@@ -317,8 +320,21 @@ static void page_wifi_update_settings() {
     ini_puts("wifi", "root_pw", g_setting.wifi.root_pw, SETTING_INI);
     settings_put_bool("wifi", "ssh", g_setting.wifi.ssh);
 
-    // Prepare WiFi interfaces
-    if (!page_wifi_bootup_pending) {
+    // Prepare WiFi interfaces. wlan_stop.sh is three things: a one second
+    // sleep, rmmods, and killing the services. At start-up with the driver
+    // absent the sleep buys nothing and the rmmods have nothing to remove,
+    // but the services can still be there -- an app restart leaves dropbear
+    // running while the driver is gone, and page_wifi_update_services() below
+    // would then start a second one. So the skip drops the sleep and the
+    // rmmods and keeps the killing, which is one fork instead of a second.
+    bool driver_loaded = (access("/sys/module/xradio_wlan", F_OK) == 0);
+
+    if (page_wifi_bootup_pending) {
+        // Left to the post-bootup action.
+    } else if (booting && g_setting.speed.skip_wifi_stop && !driver_loaded) {
+        LOGI("wifi: stop skipped at start-up, driver not loaded");
+        system_exec("killall dropbear rtspLive hostapd udhcpd >/dev/null 2>&1");
+    } else {
         system_script(WIFI_OFF);
     }
     page_wifi_update_services();
@@ -435,7 +451,7 @@ static int page_wifi_get_current_page_max() {
  * Update UI to reflect current wifi page options.
  */
 static void page_wifi_update_current_page(int which) {
-    for (size_t i = 0; i < MAX_PANELS; i++) {
+    for (int i = 0; i < pp_wifi.p_arr.count; i++) {
         lv_obj_add_flag(pp_wifi.p_arr.panel[i], FLAG_SELECTABLE);
     }
 
@@ -765,7 +781,7 @@ static lv_obj_t *page_wifi_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
-    create_select_item(arr, cont);
+    create_select_item(arr, cont, GRID_ROWS(row_dsc));
 
     create_btn_group_item(&page_wifi.page_select.button, cont, 3, _lang("Page"), _lang("Basic"), _lang("Advanced"), _lang("System"), "", 0);
     page_wifi_create_page_1(cont);
@@ -1172,7 +1188,9 @@ static void page_wifi_on_right_button(bool is_short) {
 }
 
 void page_wifi_post_bootup_action(void (*complete_callback)()) {
+    booting = true;
     page_wifi_update_settings();
+    booting = false;
 
     if (complete_callback != NULL) {
         page_wifi_bootup_pending = false;

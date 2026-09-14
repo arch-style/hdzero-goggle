@@ -95,9 +95,13 @@ void language_init() {
         memcpy(translations, payload.translations, sizeof(payload.translations));
         languages[i].translations = translations;
 
-        for (size_t index = 0; index < TRANSLATE_STRING_NUM; index++) {
-            ; // LOGD("%s: %s", languages[i].translations[index].in_english, languages[i].translations[index].translate);
-        }
+        // The table itself used to go to the log, all three languages of it
+        // at every boot: 575 lines and a fifth of the file, to say what one
+        // count says. A short table means the file on the card is out of date
+        // against TRANSLATE_STRING_NUM, which is the only thing anyone ever
+        // looked for here.
+        LOGI("language: %s loaded %zu of %d strings",
+             languages[i].code, payload.index, TRANSLATE_STRING_NUM);
 
         ini_close(&file);
     }

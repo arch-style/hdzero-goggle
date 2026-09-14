@@ -33,7 +33,10 @@
 /*Enable features to draw on transparent background.
  *It's required if opa, and transform_* style properties are used.
  *Can be also used if the UI is above another layer, e.g. an OSD menu or video player.*/
-#define LV_COLOR_SCREEN_TRANSP 0
+/*Needed by the transform_zoom that scales the menu down to fit 720p: without
+ *it lv_draw_sw_layer_create() refuses the layer and the whole menu subtree
+ *silently fails to draw. Requires LV_COLOR_DEPTH 32, which is set above.*/
+#define LV_COLOR_SCREEN_TRANSP 1
 
 /* Adjust color mix functions rounding. GPUs might calculate color mix (blending) differently.
  * 0: round down, 64: round up from x.75, 128: round up from half, 192: round up from x.25, 254: round up */

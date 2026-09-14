@@ -16,6 +16,7 @@
 #include "../core/settings.h"
 #include "app_state.h"
 #include "ui/page_common.h"
+#include "util/system.h"
 
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
 
@@ -112,6 +113,7 @@ static void rtc6715_set_ch(int ch) {
 #endif
 
 void *thread_rtc6715_rssi(void *ptr) {
+    log_thread_id("analog rssi");
     for (;;) {
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
         if (g_app_state == APP_STATE_VIDEO && g_source_info.source == SOURCE_AV_MODULE && g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
