@@ -1,0 +1,64 @@
+#!/bin/sh
+# Restore: 返却前に一度だけ使う。
+# Stage 0/1 で SD に写した「借りた時点の setting.ini」を /mnt/app に書き戻し、
+# 純正アプリを起動する。/mnt/app への書き込みはこの 1 ファイルだけで、
+# 内容は持ち主のゴーグルが元々持っていたもの。
+# SD カードに develop.sh という名前でコピーして使う。使ったら SD から消す。
+
+# カードが書けるかを最初に確かめる。
+#
+# 録画中に電源を切ると FAT が read-only に落ちることがある。そうなると下の
+# "> $LOG" がファイルを開けず、リダイレクトが失敗したコマンドをシェルは
+# 実行しない。つまりアプリが起動せず、ゴーグルは起動画面のまま止まる。
+# 2026-09-16 に実際にこれが起きた。ログを取れないことと起動しないことは
+# 別の話なので、書けないときはログを捨ててでも起動させる。
+LOG=/mnt/extsd/HDZGOGGLE.log
+WRITABLE=0
+# サブシェルに包む。リダイレクトの失敗を報告するのはコマンドではなくシェル
+# 自身なので、"2>/dev/null" をコマンドに付けても黙らない。
+if ( : > /mnt/extsd/.wtest ) 2>/dev/null; then
+	rm -f /mnt/extsd/.wtest
+	WRITABLE=1
+fi
+
+# 前回のログがまだここに残っているなら、前回はアプリが boot-logs/ への退避に
+# 到達しなかった印 (起動しなかったか、途中で止まった)。この後の "> $LOG" が
+# 消すので、先に名前を変えて残す。アプリの番号管理は HDZGOGGLE.NNNN.log しか
+# 見ないため、この名前は数にも入らず勝手に消されもしない。
+save_unrotated_log() {
+	[ -s "$LOG" ] || return 0
+	mkdir -p /mnt/extsd/boot-logs
+	n=1
+	while [ -e "/mnt/extsd/boot-logs/HDZGOGGLE.unrotated.$n.log" ]; do
+		n=$((n + 1))
+	done
+	mv "$LOG" "/mnt/extsd/boot-logs/HDZGOGGLE.unrotated.$n.log"
+}
+
+# 書けるならログを取り、書けないならログなしで起動する。
+start_app() {
+	if [ "$WRITABLE" = "1" ]; then
+		"$1" > "$LOG" 2>&1 &
+	else
+		"$1" &
+	fi
+}
+
+B=/mnt/extsd/goggle-backup
+
+# 書き戻し先はフラッシュなので、カードが read-only でもここは行える。
+# 復元は返却の一手であり、カードの状態に左右させない。
+if [ -e "$B/setting.ini.orig" ]; then
+	cp -f "$B/setting.ini.orig" /mnt/app/setting.ini
+	sync
+	if [ "$WRITABLE" = "1" ]; then
+		echo "restore ran" >> "$B/stage-history.txt"
+		sync
+	fi
+fi
+
+if [ "$WRITABLE" = "1" ]; then
+	save_unrotated_log
+fi
+
+start_app /mnt/app/app/HDZGOGGLE
