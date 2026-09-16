@@ -66,13 +66,52 @@ static const char *dvr_status_name(int status) {
 // The record process's own source warns that a power-off during a recording
 // can leave the card mounted read-only until it is re-inserted. Worth a word
 // in the log when a start fails, since nothing else would show it.
+//
+// Not statvfs, which is what this used to ask and which never once answered
+// yes. When FAT hits an error under errors=remount-ro it sets the read-only
+// flag on the superblock and leaves the flag on the mount alone; this kernel
+// builds statfs's f_flags from the mount, so an emergency read-only is
+// invisible there. Measured on a Goggle v1 at the moment every open was
+// failing with EROFS: statvfs said f_flag=0x1020, which is ST_VALID |
+// ST_RELATIME with no ST_RDONLY, while /proc/mounts said "ro" on the same
+// line. /proc/mounts prints the superblock's answer, so ask that instead.
 static bool dvr_card_readonly(void) {
-    struct statvfs vfs;
+    char line[512];
+    bool readonly = false;
+    FILE *fp = fopen("/proc/mounts", "r");
 
-    if (statvfs("/mnt/extsd", &vfs) != 0)
+    if (!fp)
         return false;
 
-    return (vfs.f_flag & ST_RDONLY) != 0;
+    while (fgets(line, sizeof(line), fp)) {
+        char *fields = NULL;
+        char *dir, *opts;
+
+        strtok_r(line, " ", &fields); // device
+        dir = strtok_r(NULL, " ", &fields);
+        strtok_r(NULL, " ", &fields); // type
+        opts = strtok_r(NULL, " ", &fields);
+
+        if (!dir || !opts || strcmp(dir, "/mnt/extsd") != 0)
+            continue;
+
+        // "ro" is an option of its own, and it has to be matched as one: the
+        // same two letters are inside "relatime" and inside the
+        // "errors=remount-ro" that put the card here in the first place.
+        char *o = NULL;
+        for (char *tok = strtok_r(opts, ",", &o); tok; tok = strtok_r(NULL, ",", &o)) {
+            if (strcmp(tok, "ro") == 0) {
+                readonly = true;
+                break;
+            }
+        }
+
+        break;
+    }
+
+    fclose(fp);
+
+    return readonly;
 }
 
 // Set by a stop request before it takes dvr_mutex, so a start still polling
@@ -127,11 +166,12 @@ static int dvr_halt_status;
 static bool dvr_card_state_logged;
 
 // What the kernel thinks of the card, once per boot, the first time a start
-// fails. dvr_card_readonly() never fired on the day the record process got
-// EROFS on every open, and nothing in the log said why, so this takes the
-// same answer three ways: statvfs with its errno, the /proc/mounts line, and
-// what dmesg has said about the card. Runs under dvr_mutex, after the two
-// seconds the start already cost, so its own few milliseconds do not matter.
+// fails. This is what showed that statvfs cannot see an emergency read-only
+// and /proc/mounts can; all three are still taken, because the one that
+// settled that question was the one nobody thought to ask. statvfs with its
+// errno, the /proc/mounts line, and what dmesg has said about the card. Runs
+// under dvr_mutex, after the two seconds the start already cost, so its own
+// few milliseconds do not matter.
 static void dvr_log_card_state(void) {
     char line[512];
 
