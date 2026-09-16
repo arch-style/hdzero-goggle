@@ -1,0 +1,66 @@
+#!/bin/sh
+# A/B: 起動速度を純正と fork で比べる測定用。
+# SD カードに develop.sh という名前でコピーして使う。
+#
+# 電源を入れるたびに交互に起動する。奇数回目が純正 (フラッシュの
+# /mnt/app/app/HDZGOGGLE)、偶数回目が fork (カードの /mnt/extsd/HDZGOGGLE)。
+# 交互にするのは、機体やカードの状態がゆっくり変わっても両者に同じように
+# 効くようにするため。まとめて 5 回ずつ測ると、その間の変化が差として出る。
+#
+# ログは 1 起動 1 ファイルで ab-logs/NNN-stock.log / NNN-fork.log に残る。
+# フラッシュには何も書かない。
+#
+# 解析は Mac 側で:
+#   utilities/sdcard-test/boot-speed.py /Volumes/<SDカード>/ab-logs
+#
+# 測るときは条件をそろえる。VTX の電源、チャンネル、カードの中身を
+# 途中で変えない。10 回 (各 5 回) も回せば十分に見える。
+
+AB=/mnt/extsd/ab-logs
+SEQ=$AB/seq
+
+# カードが書けるか。書けないとログが取れず測定にならないが、それでも
+# 起動だけはさせる。リダイレクトが失敗したコマンドをシェルは実行しないので、
+# 確かめずに書くと起動画面のまま止まる。
+WRITABLE=0
+if ( : > /mnt/extsd/.wtest ) 2>/dev/null; then
+	rm -f /mnt/extsd/.wtest
+	WRITABLE=1
+fi
+
+if [ "$WRITABLE" != "1" ]; then
+	if [ -e /mnt/extsd/HDZGOGGLE ]; then
+		/mnt/extsd/HDZGOGGLE &
+	else
+		/mnt/app/app/HDZGOGGLE &
+	fi
+	exit 0
+fi
+
+mkdir -p "$AB"
+
+# 何回目か。壊れていたら 0 から数え直す。
+n=$(cat "$SEQ" 2>/dev/null)
+case "$n" in
+'' | *[!0-9]*) n=0 ;;
+esac
+n=$((n + 1))
+echo "$n" > "$SEQ"
+
+if [ $((n % 2)) -eq 1 ]; then
+	WHICH=stock
+	APP=/mnt/app/app/HDZGOGGLE
+else
+	WHICH=fork
+	APP=/mnt/extsd/HDZGOGGLE
+	# カードに fork が無ければ純正になる。名前で分かるようにしておく。
+	if [ ! -e "$APP" ]; then
+		WHICH=stock-nofork
+		APP=/mnt/app/app/HDZGOGGLE
+	fi
+fi
+
+LOG=$(printf '%s/%03d-%s.log' "$AB" "$n" "$WHICH")
+sync
+
+"$APP" > "$LOG" 2>&1 &

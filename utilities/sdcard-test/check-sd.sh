@@ -72,7 +72,9 @@ else
 		ng "1 行目が #!/bin/sh ではない: $(head -1 "$D")"
 	fi
 	if grep -q "HDZGOGGLE" "$D"; then
-		if grep -q '/mnt/extsd/HDZGOGGLE ' "$D" || grep -q '/mnt/extsd/HDZGOGGLE$' "$D"; then
+		if grep -q 'ab-logs' "$D"; then
+			say "種別: 純正と fork を交互に起動する測定用 (abtest)"
+		elif grep -q '/mnt/extsd/HDZGOGGLE ' "$D" || grep -q '/mnt/extsd/HDZGOGGLE$' "$D"; then
 			say "種別: fork を SD から起動する (stage1)"
 		elif grep -q "setting.ini.orig\" /mnt/app/setting.ini" "$D"; then
 			say "種別: setting.ini を書き戻す (restore)"
