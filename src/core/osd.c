@@ -205,7 +205,15 @@ void osd_rec_show(bool bShow) {
     if (fault && g_sdcard_enable && !dvr_is_recording) {
         snprintf(buf, sizeof(buf), "DVR off: %s", fault);
         lv_label_set_text(g_osd_hdzero.dvr_fault[is_fhd], buf);
-        lv_obj_align_to(g_osd_hdzero.dvr_fault[is_fhd], g_osd_hdzero.sd_rec[is_fhd], LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+        // Under the SD icon, right edges together, so the text grows to the
+        // left. Beside it, which is where this started, is where the four
+        // antenna icons and the video link quality live: the message was
+        // there and unreadable, which for the one element whose whole job is
+        // to be read is the same as not being drawn. Growing left rather
+        // than right also keeps a long reason on the screen -- the icon sits
+        // near the right edge, and "DVR off: record path failed" set from
+        // there ran off it.
+        lv_obj_align_to(g_osd_hdzero.dvr_fault[is_fhd], g_osd_hdzero.sd_rec[is_fhd], LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
         lv_obj_clear_flag(g_osd_hdzero.dvr_fault[is_fhd], LV_OBJ_FLAG_HIDDEN);
     } else
         lv_obj_add_flag(g_osd_hdzero.dvr_fault[is_fhd], LV_OBJ_FLAG_HIDDEN);
@@ -1000,7 +1008,7 @@ static void embedded_osd_init(uint8_t fhd) {
     osd_resource_path(buf, "%s", is_fhd, noSdcard_bmp);
     osd_object_create_img(fhd, &g_osd_hdzero.sd_rec[fhd], buf, &g_setting.osd.element[OSD_GOGGLE_SD_REC].position, so);
 
-    // Placed beside sd_rec whenever it is shown, so its own position is
+    // Placed under sd_rec whenever it is shown, so its own position is
     // only a starting point.
     osd_object_create_label(fhd, &g_osd_hdzero.dvr_fault[fhd], "", &g_setting.osd.element[OSD_GOGGLE_SD_REC].position, so);
     lv_obj_set_style_bg_color(g_osd_hdzero.dvr_fault[fhd], lv_color_hex(0x010101), LV_PART_MAIN);
