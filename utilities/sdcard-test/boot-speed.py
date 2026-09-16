@@ -121,12 +121,41 @@ def main():
         med[which] = statistics.median(vals)
         print(f'{which:<8} {len(vals):>4} {med[which]:>8.2f}s {min(vals):>8.2f}s {max(vals):>8.2f}s')
 
-    if 'stock' in med and 'fork' in med:
-        d_s = med['stock'] - med['fork']
-        print()
-        print(f'差 (中央値): {d_s:+.2f}s   fork は純正の {med["fork"] / med["stock"] * 100:.0f}%')
-        if min(len(v) for k, v in groups.items() if k in ('stock', 'fork')) < 3:
-            print('※ 各 3 回未満。中央値としては当てにならないので、もう何回か回す')
+    if 'stock' not in med or 'fork' not in med:
+        return
+
+    print()
+    print(f'差 (中央値): {med["stock"] - med["fork"]:+.2f}s   '
+          f'fork は純正の {med["fork"] / med["stock"] * 100:.0f}%')
+
+    # 何回回せば足りるかは回数では決まらない。同じ条件での散らばりより差の
+    # ほうが十分に大きければ、2 回ずつでも結論は動かない。逆に散らばりの
+    # 中に差が埋もれているなら、10 回回しても言えることは増えない。だから
+    # 回数ではなく、二つの群の幅が重なっているかどうかで判定する。
+    stock, fork = groups['stock'], groups['fork']
+    spread = max(max(stock) - min(stock), max(fork) - min(fork))
+
+    if max(fork) < min(stock):
+        faster, gap = 'fork', min(stock) - max(fork)
+        line = f'純正の最速 {min(stock):.2f}s よりも fork の最遅 {max(fork):.2f}s のほうが速い。'
+    elif max(stock) < min(fork):
+        faster, gap = 'stock', min(fork) - max(stock)
+        line = f'fork の最速 {min(fork):.2f}s よりも純正の最遅 {max(stock):.2f}s のほうが速い。'
+    else:
+        faster, gap = None, 0.0
+        line = (f'二つの範囲が重なっている '
+                f'(純正 {min(stock):.2f}-{max(stock):.2f}s, fork {min(fork):.2f}-{max(fork):.2f}s)。')
+
+    print()
+    print(line)
+    if faster is None:
+        print('この回数では差とは言えない。回数を足すか、条件が揃っていたかを疑う。')
+    elif spread > 0 and gap <= spread * 2:
+        print(f'ただし差 {gap:.2f}s に対し、同条件でのばらつきが {spread:.2f}s ある。'
+              f'際どいので、あと数回足すと確かになる。')
+    else:
+        print(f'差 {gap:.2f}s は同条件でのばらつき {spread:.2f}s より十分大きく、'
+              f'この回数で結論は動かない。')
 
 
 if __name__ == '__main__':

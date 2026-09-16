@@ -14,7 +14,9 @@
 #   utilities/sdcard-test/boot-speed.py /Volumes/<SDカード>/ab-logs
 #
 # 測るときは条件をそろえる。VTX の電源、チャンネル、カードの中身を
-# 途中で変えない。10 回 (各 5 回) も回せば十分に見える。
+# 途中で変えない。4 回 (各 2 回) で足りる。起動時間のばらつきは同じ条件なら
+# 0.5 秒ほどで、見ようとしている差はその何倍もあるため。足りなければ
+# boot-speed.py がそう言う。
 
 AB=/mnt/extsd/ab-logs
 SEQ=$AB/seq
