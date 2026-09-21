@@ -39,6 +39,9 @@ typedef struct {
 media_t *media_instantiate(char *filename, notify_cb_t notify);
 void media_exit(media_t *media);
 void media_control(media_t *media, player_cmd_t *cmd);
+uint32_t media_frame_interval_ms(media_t *media);
+uint32_t media_step_frame(media_t *media, uint32_t frame_ms);
+uint32_t media_seek_show(media_t *media, uint32_t seekto, uint32_t frame_ms);
 
 #ifdef __cplusplus
 }

@@ -465,6 +465,14 @@ void rbtn_click(right_button_t click_type) {
             else if (click_type == RIGHT_LONG_PRESS)
                 submenu_right_button(false);
             break;
+        case APP_STATE_PLAYBACK:
+            // Only the dial reached the player before; the step size and the
+            // play speed need a button, and this is the one that is free.
+            if (click_type == RIGHT_CLICK)
+                pb_key(RIGHT_KEY_CLICK);
+            else if (click_type == RIGHT_LONG_PRESS)
+                pb_key(RIGHT_KEY_PRESS);
+            break;
         case APP_STATE_VIDEO:
             if (click_type == RIGHT_CLICK) {
                 (*rbtn_click_callback)();

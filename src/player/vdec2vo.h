@@ -8,6 +8,8 @@ extern "C" {
 #include <hwdisplay.h>
 #endif
 
+#include <stdbool.h>
+
 #include <mpi_clock.h>
 #include <mpi_sys.h>
 #include <mpi_vdec.h>
@@ -59,6 +61,13 @@ typedef struct
 
     uint32_t flagEOF;
     Vdec2VoParams_t params;
+
+    // The frame the output is showing while stepping, still owned by the
+    // decoder. It is released when the next one replaces it: releasing it
+    // straight after handing it over would let the decoder write over the
+    // picture that is on the screen.
+    VIDEO_FRAME_INFO_S heldFrame;
+    bool holdsFrame;
 } Vdec2VoContext_t;
 
 Vdec2VoContext_t *vdec2vo_initSys(void);
@@ -67,6 +76,11 @@ ERRORTYPE vdec2vo_prepare(Vdec2VoContext_t *vvCtx, Vdec2VoParams_t *params);
 ERRORTYPE vdec2vo_seekTo(Vdec2VoContext_t *vvCtx);
 ERRORTYPE vdec2vo_stop(Vdec2VoContext_t *vvCtx);
 ERRORTYPE vdec2vo_pause(Vdec2VoContext_t *vvCtx);
+ERRORTYPE vdec2vo_voPause(Vdec2VoContext_t *vvCtx);
+ERRORTYPE vdec2vo_voResume(Vdec2VoContext_t *vvCtx);
+ERRORTYPE vdec2vo_manualEnter(Vdec2VoContext_t *vvCtx);
+ERRORTYPE vdec2vo_manualExit(Vdec2VoContext_t *vvCtx);
+ERRORTYPE vdec2vo_showNextFrame(Vdec2VoContext_t *vvCtx, int *ptsMs);
 ERRORTYPE vdec2vo_start(Vdec2VoContext_t *vvCtx);
 ERRORTYPE vdec2vo_currentMediaTime(Vdec2VoContext_t *vvCtx, int *mediaTime);
 ERRORTYPE vdec2vo_checkEof(Vdec2VoContext_t *vvCtx);

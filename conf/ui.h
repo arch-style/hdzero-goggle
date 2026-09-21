@@ -44,7 +44,8 @@ extern "C" {
 #define UI_MPLAYER_SCR_WIDTH              1920
 #define UI_MPLAYER_SCR_HEIGHT             1080
 #define UI_MPLAYER_CB_WIDTH               700
-#define UI_MPLAYER_CB_HEIGHT              84
+#define UI_MPLAYER_CB_HEIGHT              120 // two lines: timeline, then step and speed
+#define UI_MPLAYER_CB_BOTTOM_GAP          40  // clear of the bottom of the screen
 #define UI_MPLAYER_BTN_WIDTH              48
 #define UI_MPLAYER_BTN_HEIGHT             48
 #define UI_MPLAYER_BTN_GAP                16
@@ -187,7 +188,8 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_MPLAYER_SCR_WIDTH              1280
 #define UI_MPLAYER_SCR_HEIGHT             720
 #define UI_MPLAYER_CB_WIDTH               460
-#define UI_MPLAYER_CB_HEIGHT              56
+#define UI_MPLAYER_CB_HEIGHT              80 // two lines: timeline, then step and speed
+#define UI_MPLAYER_CB_BOTTOM_GAP          80 // clear of the bottom of the screen
 #define UI_MPLAYER_BTN_WIDTH              32
 #define UI_MPLAYER_BTN_HEIGHT             32
 #define UI_MPLAYER_BTN_GAP                4

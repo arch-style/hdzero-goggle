@@ -351,6 +351,119 @@ ERRORTYPE vdec2vo_pause(Vdec2VoContext_t *vvCtx) {
     return ret;
 }
 
+// Frame at a time.
+//
+// With VDEC bound to VO, frames go straight from the decoder to the screen and
+// the app never sees them, so there is no way to ask for exactly one. Taking
+// that one binding out puts the app in the middle: the decoder hands over a
+// decoded frame when asked, and the output shows the frame it is given. A step
+// is then one frame by construction, with no timing involved.
+//
+// The clock binding goes too. A frame carries a timestamp, and while the
+// output is following the clock it would hold that frame back until the clock
+// reached it; nothing here runs the clock, so it would never show.
+#define VDEC2VO_frameWAIT_MS 300
+
+static void vdec2vo_releaseHeld(Vdec2VoContext_t *vvCtx) {
+    if (!vvCtx->holdsFrame) {
+        return;
+    }
+
+    AW_MPI_VDEC_ReleaseImage(vvCtx->vdecChn, &vvCtx->heldFrame);
+    vvCtx->holdsFrame = false;
+}
+
+ERRORTYPE vdec2vo_manualEnter(Vdec2VoContext_t *vvCtx) {
+    MPP_CHN_S VdecChn = {MOD_ID_VDEC, 0, vvCtx->vdecChn};
+    MPP_CHN_S VoChn = {MOD_ID_VOU, vvCtx->voLayer, vvCtx->voChn};
+    MPP_CHN_S ClockChn = {MOD_ID_CLOCK, 0, vvCtx->params.clkChn};
+
+    ERRORTYPE vdecRet = AW_MPI_SYS_UnBind(&VdecChn, &VoChn);
+    ERRORTYPE clockRet = AW_MPI_SYS_UnBind(&ClockChn, &VoChn);
+
+    // The output has to be running to accept a frame.
+    ERRORTYPE startRet = AW_MPI_VO_StartChn(vvCtx->voLayer, vvCtx->voChn);
+    ERRORTYPE resumeRet = AW_MPI_VO_ResumeChn(vvCtx->voLayer, vvCtx->voChn);
+
+    LOGI("manual enter: unbind vdec->vo %x, clock->vo %x, vo start %x, resume %x",
+         vdecRet, clockRet, startRet, resumeRet);
+
+    return vdecRet;
+}
+
+ERRORTYPE vdec2vo_manualExit(Vdec2VoContext_t *vvCtx) {
+    MPP_CHN_S VdecChn = {MOD_ID_VDEC, 0, vvCtx->vdecChn};
+    MPP_CHN_S VoChn = {MOD_ID_VOU, vvCtx->voLayer, vvCtx->voChn};
+    MPP_CHN_S ClockChn = {MOD_ID_CLOCK, 0, vvCtx->params.clkChn};
+
+    vdec2vo_releaseHeld(vvCtx);
+
+    ERRORTYPE vdecRet = AW_MPI_SYS_Bind(&VdecChn, &VoChn);
+    ERRORTYPE clockRet = AW_MPI_SYS_Bind(&ClockChn, &VoChn);
+
+    LOGI("manual exit: bind vdec->vo %x, clock->vo %x", vdecRet, clockRet);
+
+    return vdecRet;
+}
+
+// Take the next decoded frame and put it on the screen. Returns SUCCESS only
+// when a frame was both received and shown.
+ERRORTYPE vdec2vo_showNextFrame(Vdec2VoContext_t *vvCtx, int *ptsMs) {
+    VIDEO_FRAME_INFO_S frame;
+    ERRORTYPE getRet;
+    ERRORTYPE sendRet;
+
+    memset(&frame, 0, sizeof(frame));
+
+    getRet = AW_MPI_VDEC_GetImage(vvCtx->vdecChn, &frame, VDEC2VO_frameWAIT_MS);
+    if (getRet != SUCCESS) {
+        LOGD("get image: %x", getRet);
+        return getRet;
+    }
+
+    sendRet = AW_MPI_VO_SendFrame(vvCtx->voLayer, vvCtx->voChn, &frame, VDEC2VO_frameWAIT_MS);
+
+    if (ptsMs) {
+        *ptsMs = (int)(frame.VFrame.mpts / 1000);
+    }
+
+    LOGD("frame: get %x, send %x, pts %dms, %ux%u",
+         getRet, sendRet, (int)(frame.VFrame.mpts / 1000), frame.VFrame.mWidth, frame.VFrame.mHeight);
+
+    // The one on screen until now can go back; this one takes its place.
+    vdec2vo_releaseHeld(vvCtx);
+
+    if (sendRet == SUCCESS) {
+        vvCtx->heldFrame = frame;
+        vvCtx->holdsFrame = true;
+    } else {
+        AW_MPI_VDEC_ReleaseImage(vvCtx->vdecChn, &frame);
+    }
+
+    return sendRet;
+}
+
+// Stop and start the output on its own, leaving the demuxer and the decoder
+// running. This is what freezes and releases the picture for a frame step: the
+// decoder stays hot with frames ready, so releasing the output puts one up
+// straight away, where restarting the decoder takes longer than the frame it
+// is being given.
+ERRORTYPE vdec2vo_voPause(Vdec2VoContext_t *vvCtx) {
+    if ((vvCtx->voLayer < 0) || (vvCtx->voChn < 0)) {
+        return SUCCESS;
+    }
+
+    return AW_MPI_VO_PauseChn(vvCtx->voLayer, vvCtx->voChn);
+}
+
+ERRORTYPE vdec2vo_voResume(Vdec2VoContext_t *vvCtx) {
+    if ((vvCtx->voLayer < 0) || (vvCtx->voChn < 0)) {
+        return SUCCESS;
+    }
+
+    return AW_MPI_VO_ResumeChn(vvCtx->voLayer, vvCtx->voChn);
+}
+
 ERRORTYPE vdec2vo_stop(Vdec2VoContext_t *vvCtx) {
     ERRORTYPE ret = SUCCESS;
 

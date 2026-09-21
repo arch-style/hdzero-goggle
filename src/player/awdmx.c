@@ -181,8 +181,10 @@ AwdmxContext_t *awdmx_open(char *sFile, CB_onDmxEof cbOnEof, void *context) {
     dmxCtx->width = DemuxMediaInfo.mVideoStreamInfo[nIndex].mWidth;
     dmxCtx->height = DemuxMediaInfo.mVideoStreamInfo[nIndex].mHeight;
     dmxCtx->codecType = DemuxMediaInfo.mVideoStreamInfo[nIndex].mCodecType;
+    dmxCtx->frameRate = DemuxMediaInfo.mVideoStreamInfo[nIndex].mFrameRate;
     dmxCtx->msDuration = DemuxMediaInfo.mDuration;
-    LOGD("stream info %dx%d", DemuxMediaInfo.mVideoStreamInfo[nIndex].mWidth, DemuxMediaInfo.mVideoStreamInfo[nIndex].mHeight);
+    LOGD("stream info %dx%d @ %d.%03dfps", DemuxMediaInfo.mVideoStreamInfo[nIndex].mWidth, DemuxMediaInfo.mVideoStreamInfo[nIndex].mHeight,
+         dmxCtx->frameRate / 1000, dmxCtx->frameRate % 1000);
 
     if (DemuxMediaInfo.mAudioNum > 0) {
         nIndex = DemuxMediaInfo.mAudioIndex;
@@ -366,6 +368,26 @@ ERRORTYPE awdmx_seekTo(AwdmxContext_t *dmxCtx, int seekTime) {
     }
 
     return ret;
+}
+
+// Stop the media clock on its own, without touching demux, decoder or output.
+// The clock is what the VO presents against, so this stops the picture in one
+// call. Pausing the whole chain takes three, and at 60fps the picture runs on
+// for another frame or two while they go through.
+ERRORTYPE awdmx_clockPause(AwdmxContext_t *dmxCtx) {
+    if (!dmxCtx || dmxCtx->clkChn < 0) {
+        return SUCCESS;
+    }
+
+    return AW_MPI_CLOCK_Pause(dmxCtx->clkChn);
+}
+
+ERRORTYPE awdmx_clockStart(AwdmxContext_t *dmxCtx) {
+    if (!dmxCtx || dmxCtx->clkChn < 0) {
+        return SUCCESS;
+    }
+
+    return AW_MPI_CLOCK_Start(dmxCtx->clkChn);
 }
 
 bool awdmx_isEOF(AwdmxContext_t *dmxCtx) {

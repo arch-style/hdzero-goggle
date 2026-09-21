@@ -10,6 +10,7 @@
 #include "common.hh"
 #include "player/media.h"
 #include "record/record_definitions.h"
+#include "ui/ui_porting.h"
 #include "ui/ui_style.h"
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -25,6 +26,61 @@ player_cmd_t cmd;
 LV_IMG_DECLARE(img_Play_0);
 LV_IMG_DECLARE(img_Stop_0);
 LV_IMG_DECLARE(img_star);
+
+// Step size and play speed.
+//
+// The SoC's player has no play-rate call and no frame-step call
+// (AW_MPI_VO_StepChn is commented out of mpi_vo.h and is not exported by
+// libmedia_mpp.so), so both are paced from here: the pipeline is let run for a
+// short burst and paused again. Seeking cannot stand in for a small step,
+// because AW_MPI_DEMUX_Seek lands on a keyframe and the recorder writes one
+// per second (maxKeyItl = fps), so a one-frame seek either does nothing or
+// jumps a whole second.
+//
+// Step size and speed survive the file being closed: picking them again for
+// every clip is the kind of thing that makes a feature not worth having.
+static const struct {
+    const char *name;
+    uint32_t ms; // 0 = one frame of the open file
+} pb_steps[PB_STEP_COUNT] = {
+    {"1 frame", 0},
+    {"1s", 1000},
+    {"5s", 5000},
+    {"10s", 10000},
+    {"30s", 30000},
+};
+
+static const struct {
+    const char *name;
+    uint8_t divider;
+} pb_speeds[PB_SPEED_COUNT] = {
+    {"1x", 1},
+    {"1/2x", 2},
+    {"1/4x", 4},
+    {"1/8x", 8},
+};
+
+// Media time per burst while playing slow. One frame would be the smooth
+// choice, but lv_timer_handler() runs about every 10ms with work in between,
+// so a burst that short would be swallowed by the pacing error.
+#define PB_BURST_MS 50
+
+static uint8_t pb_step = PB_STEP_5S;
+static uint8_t pb_speed = PB_SPEED_1_1;
+
+// The gate that makes slow play out of full-speed play.
+static lv_timer_t *pb_gate_timer = NULL;
+static bool pb_gate_running = false;
+
+// Dialling is collected into one seek. Each seek costs the demuxer a keyframe
+// search and the decoder a restart, and the dial sends its clicks in bursts,
+// so seeking per click made a held dial feel like treacle and gave the
+// pipeline a queue of seeks to wedge on. The target moves with every click and
+// is seeked to once the dial stops.
+#define PB_SEEK_COALESCE_MS 120
+
+static lv_timer_t *pb_seek_timer = NULL;
+static bool pb_seek_pending = false;
 
 static bool stars_positioned_on_timeline = false;
 static size_t stars_count = 0;
@@ -79,12 +135,20 @@ static void update_time_label(bool mediaOK) {
     }
 }
 
+static void update_mode_label() {
+    char s[64];
+
+    snprintf(s, sizeof(s), "Step %s   Speed %s", pb_steps[pb_step].name, pb_speeds[pb_speed].name);
+    lv_label_set_text(controller._mode, s);
+}
+
 static void update_mplayer() {
     if (!controller.enable) {
         lv_obj_add_flag(controller.bg, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_img_set_src(controller._btn, controller.is_playing ? &img_Stop_0 : &img_Play_0);
+        update_mode_label();
         update_time_label(media != NULL);
     }
 }
@@ -121,6 +185,16 @@ static void mplayer_create_slider(lv_obj_t *parent, int16_t x, int16_t y) {
     lv_obj_set_pos(controller._label, x + UI_MPLAYER_SLD_WIDTH + UI_MPLAYER_BTN_GAP, y);
     lv_obj_set_size(controller._label, 160, UI_MPLAYER_BTN_HEIGHT);
 
+    // Second line of the bar, clear of the slider's knob, which the knob's
+    // 20px padding stretches well past the 3px track.
+    controller._mode = lv_label_create(parent);
+    lv_label_set_text(controller._mode, "");
+    lv_obj_set_style_text_font(controller._mode, UI_PLAYER_TEXT_FONT, 0);
+    lv_obj_set_style_text_align(controller._mode, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_color(controller._mode, lv_color_hex(0xC0C0C0), 0);
+    lv_obj_set_pos(controller._mode, x, y + UI_MPLAYER_BTN_HEIGHT);
+    lv_obj_set_width(controller._mode, UI_MPLAYER_SLD_WIDTH);
+
     for (size_t i = 0; i < stars_count; i++) {
         controller._stars[i] = lv_img_create(parent);
         lv_img_set_src(controller._stars[i], &img_star);
@@ -130,17 +204,30 @@ static void mplayer_create_slider(lv_obj_t *parent, int16_t x, int16_t y) {
 
 static void init_mplayer() {
     int16_t x, y;
+
+    // Taken from the display rather than from UI_MPLAYER_SCR_*: the player
+    // runs on the UI canvas, which is 720p on the goggle 2 and 1080p on the
+    // goggle 1, and a bar placed for 1080p sits off the bottom of a 720p
+    // screen. The bar keeps its own size, so it covers proportionally more of
+    // the smaller screen, which is the readable direction to err in.
+    //
+    // The canvas carries DISP_OVERSCAN that the flush does not put on screen,
+    // so the visible area is that much smaller than the driver's resolution.
+    const lv_coord_t scr_w = lv_disp_get_hor_res(NULL) - DISP_OVERSCAN;
+    const lv_coord_t scr_h = lv_disp_get_ver_res(NULL) - DISP_OVERSCAN;
+
     // Background
     controller.bg = lv_obj_create(lv_scr_act());
     lv_obj_clear_flag(controller.bg, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(controller.bg, UI_MPLAYER_SCR_WIDTH, UI_MPLAYER_SCR_HEIGHT);
+    lv_obj_set_size(controller.bg, scr_w, scr_h);
     lv_obj_set_pos(controller.bg, 0, 0);
 
     // Controller
     controller.bar = lv_obj_create(lv_scr_act());
     lv_obj_clear_flag(controller.bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(controller.bar, UI_MPLAYER_CB_WIDTH, UI_MPLAYER_CB_HEIGHT);
-    lv_obj_set_pos(controller.bar, (UI_MPLAYER_SCR_WIDTH - UI_MPLAYER_CB_WIDTH) >> 1, UI_MPLAYER_SCR_HEIGHT - 160);
+    lv_obj_set_pos(controller.bar, (scr_w - UI_MPLAYER_CB_WIDTH) >> 1,
+                   scr_h - UI_MPLAYER_CB_HEIGHT - UI_MPLAYER_CB_BOTTOM_GAP);
 
     // Buttons
     x = UI_MPLAYER_BTN_GAP;
@@ -178,6 +265,7 @@ static void free_mplayer() {
     controller.enable = false;
     lv_obj_del(controller._btn);
     lv_obj_del(controller._label);
+    lv_obj_del(controller._mode);
     lv_obj_del(controller._slider);
     for (size_t i = 0; i < stars_count; i++) {
         lv_obj_del(controller._stars[i]);
@@ -201,6 +289,123 @@ void media_pause();
 void media_seek(uint32_t seekto);
 void mplayer_exit();
 
+// The pause half of a slow-play cycle, in ms of wall clock.
+static uint32_t pb_gate_pause_ms(void) {
+    return PB_BURST_MS * (pb_speeds[pb_speed].divider - 1);
+}
+
+static void pb_gate_stop(void) {
+    if (pb_gate_timer) {
+        lv_timer_del(pb_gate_timer);
+        pb_gate_timer = NULL;
+    }
+    pb_gate_running = false;
+}
+
+static void pb_gate_cb(lv_timer_t *timer) {
+    if (pb_gate_running) {
+        media_pause();
+        pb_gate_running = false;
+        lv_timer_set_period(timer, pb_gate_pause_ms());
+    } else {
+        media_start();
+        pb_gate_running = true;
+        lv_timer_set_period(timer, PB_BURST_MS);
+    }
+}
+
+// Run the pipeline in bursts so it covers PB_BURST_MS of the file every
+// PB_BURST_MS * divider of wall clock. The sound goes with it, in chunks; the
+// point of slow play here is reading what happened on the video.
+static void pb_gate_start(void) {
+    pb_gate_stop();
+    media_start();
+    pb_gate_running = true;
+    pb_gate_timer = lv_timer_create(pb_gate_cb, PB_BURST_MS, NULL);
+}
+
+static void pb_seek_cancel(void) {
+    if (pb_seek_timer) {
+        lv_timer_del(pb_seek_timer);
+        pb_seek_timer = NULL;
+    }
+    pb_seek_pending = false;
+}
+
+static void pb_play(void) {
+    pb_seek_cancel();
+    controller.is_playing = true;
+
+    if (pb_speed == PB_SPEED_1_1) {
+        pb_gate_stop();
+        media_start();
+    } else {
+        pb_gate_start();
+    }
+}
+
+static void pb_pause(void) {
+    pb_gate_stop();
+    controller.is_playing = false;
+    media_pause();
+}
+
+// One frame forward, from the media clock rather than from a timer. This
+// blocks for about a frame, which is what the dial asked for.
+static void pb_step_forward(void) {
+    pb_gate_stop();
+    pb_seek_cancel();
+    controller.is_playing = false;
+
+    controller.value = (int32_t)media_step_frame(media, controller.frame_ms);
+}
+
+static void pb_seek_now(void) {
+    pb_seek_timer = NULL;
+    pb_seek_pending = false;
+
+    if (controller.is_playing) {
+        media_seek(controller.value); // keeps playing, gate and all
+    } else {
+        controller.value = (int32_t)media_seek_show(media, (uint32_t)controller.value, controller.frame_ms);
+    }
+}
+
+static void pb_seek_cb(lv_timer_t *timer) {
+    (void)timer; // a one-shot timer deletes itself after this
+    pb_seek_now();
+    update_mplayer();
+}
+
+// Move the target and (re)start the collection window. Whatever the dial ends
+// on is the one place the player seeks to.
+static void pb_seek_by(int32_t delta_ms) {
+    controller.value += delta_ms;
+
+    if (controller.value > controller.range)
+        controller.value = controller.range;
+    if (controller.value < 0)
+        controller.value = 0;
+
+    pb_seek_pending = true;
+
+    if (pb_seek_timer) {
+        lv_timer_reset(pb_seek_timer);
+    } else {
+        pb_seek_timer = lv_timer_create(pb_seek_cb, PB_SEEK_COALESCE_MS, NULL);
+        lv_timer_set_repeat_count(pb_seek_timer, 1);
+    }
+}
+
+// One frame back has to be a seek: the pipeline only runs forwards. The
+// demuxer seeks to a keyframe, so where this lands is the file's business, but
+// the target keeps moving back a frame per click either way.
+static void pb_step_back(void) {
+    pb_gate_stop();
+    controller.is_playing = false;
+    pb_seek_by(-(int32_t)controller.frame_ms);
+}
+
 uint8_t mplayer_on_key(uint8_t key) {
     if (!controller.enable)
         return 0;
@@ -214,27 +419,35 @@ uint8_t mplayer_on_key(uint8_t key) {
 
     case DIAL_KEY_CLICK:
         if (controller.is_playing)
-            media_pause();
+            pb_pause();
         else
-            media_start();
-
-        controller.is_playing = !controller.is_playing;
+            pb_play();
         break;
 
     case DIAL_KEY_UP:
-        controller.value += 5000;
-        if (controller.value > controller.range)
-            controller.value = controller.range;
-
-        media_seek(controller.value);
+        if (pb_steps[pb_step].ms == 0)
+            pb_step_forward();
+        else
+            pb_seek_by((int32_t)pb_steps[pb_step].ms);
         break;
 
     case DIAL_KEY_DOWN:
-        controller.value -= 5000;
-        if (controller.value < 0)
-            controller.value = 0;
+        if (pb_steps[pb_step].ms == 0)
+            pb_step_back();
+        else
+            pb_seek_by(-(int32_t)pb_steps[pb_step].ms);
+        break;
 
-        media_seek(controller.value);
+    // The dial is taken (click plays, long press leaves), so the function
+    // button carries the two new settings.
+    case RIGHT_KEY_CLICK:
+        pb_step = (pb_step + 1) % PB_STEP_COUNT;
+        break;
+
+    case RIGHT_KEY_PRESS:
+        pb_speed = (pb_speed + 1) % PB_SPEED_COUNT;
+        if (controller.is_playing)
+            pb_play(); // picks the gate up, or drops it for 1x
         break;
     }
 
@@ -252,10 +465,23 @@ static void notify_cb(media_info_t *info) {
         return;
     if (info->playing_time == 0xFFFFFFFF)
         return;
-    if (info->playing_time == 0xFFFFFFFE)
+    if (info->playing_time == 0xFFFFFFFE) {
+        // End of file: play_moveStatus() has stopped the pipeline, so there is
+        // nothing left to pace. The lvgl lock is what serialises this against
+        // the UI thread's lv_timer_handler().
+        pthread_mutex_lock(&lvgl_mutex);
+        pb_gate_stop();
+        pthread_mutex_unlock(&lvgl_mutex);
         return;
+    }
 
-    mplayer_set_time(info->playing_time, info->duration);
+    // While clicks are still being collected, the label shows where the dial
+    // is heading; the clock would drag it back to where the picture still is.
+    if (pb_seek_pending) {
+        controller.range = (int32_t)info->duration;
+    } else {
+        mplayer_set_time(info->playing_time, info->duration);
+    }
 
     pthread_mutex_lock(&lvgl_mutex);
     update_time_label(true);
@@ -333,7 +559,11 @@ void media_seek(uint32_t seekto) {
 
     // start
     if (controller.is_playing) {
-        media_start();
+        if (pb_speed == PB_SPEED_1_1) {
+            media_start();
+        } else {
+            pb_gate_start();
+        }
     }
 
     // LOGI("media_seek %d",seekto);
@@ -346,11 +576,15 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
-    media_start();
+    controller.frame_ms = media_frame_interval_ms(media);
+    LOGI("frame is %ums", controller.frame_ms);
+    pb_play();
     update_mplayer();
 }
 
 void mplayer_exit() {
+    pb_gate_stop();
+    pb_seek_cancel();
     pthread_mutex_unlock(&lvgl_mutex);
     if (media) {
         media_exit(media);

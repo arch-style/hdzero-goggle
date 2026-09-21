@@ -30,6 +30,7 @@ typedef struct
     int videoNum;
     uint16_t width;
     uint16_t height;
+    int frameRate; // x1000, as the demuxer reports it
     PAYLOAD_TYPE_E codecType;
 
     int audioNum;
@@ -48,6 +49,8 @@ ERRORTYPE awdmx_start(AwdmxContext_t *dmxCtx);
 ERRORTYPE awdmx_pause(AwdmxContext_t *dmxCtx);
 ERRORTYPE awdmx_stop(AwdmxContext_t *dmxCtx);
 ERRORTYPE awdmx_seekTo(AwdmxContext_t *dmxCtx, int seekTime);
+ERRORTYPE awdmx_clockPause(AwdmxContext_t *dmxCtx);
+ERRORTYPE awdmx_clockStart(AwdmxContext_t *dmxCtx);
 bool awdmx_isEOF(AwdmxContext_t *dmxCtx);
 
 #ifdef __cplusplus
