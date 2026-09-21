@@ -695,6 +695,30 @@ void Display_UI_init() {
     g_hw_stat.source_mode = SOURCE_MODE_UI;
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
+    // 1080p50, and it cannot be anything else. The recordings are 720p60, and
+    // since the decoder's 40fps drop was lifted (a frame interval in
+    // libmpp_vo.so) 60 frames a second reach this panel and can only be shown
+    // 6:5 at 50Hz. Two ways to a 60Hz panel were measured here and both
+    // corrupted the picture, each in the way its own mismatch predicts:
+    //
+    //   1080p60 -- right resolution, wrong rate -- tore it diagonally. Tried
+    //   with the MENU_UI clock phase and again with
+    //   VIDEO_SOURCE_HDZERO_IN_1080P30's, whose path genuinely runs the VDPO
+    //   at 1080p60, so the phase is not what is missing.
+    //
+    //   720p60 -- wrong resolution -- repeated it horizontally and sheared it.
+    //   The player's own video layer was correct and ran at a true 60fps, so
+    //   what breaks is the framebuffer half of the display, not the timing.
+    //
+    // Both fit the FPGA holding a fixed geometry for this input. The live
+    // video takes the other side of the mux (Display_VO_SWITCH(1)) and the app
+    // programs its input timing explicitly, which is why 720p60 works there:
+    // screen.mfpga.set720p60() writes a horizontal total of 1650, and
+    // MFPGA_Set1080P30() writes 2200 for its 1080p60 output. There is no
+    // MFPGA_Set1080P50() at all, so nothing here ever sets a geometry for the
+    // framebuffer path -- it is configured outside this program and expects
+    // 1080p50. Changing that needs the FPGA registers for this input, which
+    // are undocumented.
     if (!skip_timing)
         vdpo_set_timing(VDPO_TMG_1080P50, "1080p50");
     system_exec("aww 0x0300b340 0x00000008");

@@ -1,0 +1,124 @@
+#!/bin/sh
+# libmpp_vo.so の 40fps 上限を外して起動する。
+#
+# VideoRenderEmptyThisBuffer() は、デコーダから渡されたフレームの pts が前に
+# 受け取ったフレームより mPlayFrameInterval 未満しか進んでいないと、その場で
+# 捨てる。その値は PropertyGet_PlayFrameInterval() が返す定数 25000us で、
+# 設定ファイルも環境変数も見ていない。名前に反して、関数の中身は即値を返す
+# だけの 5 命令しかない。
+#
+#   000069fc <PropertyGet_PlayFrameInterval>:
+#       movw r2, #25000   ; 0x61a8
+#       mov  r3, #0
+#       strd r2, [r0]
+#       mov  r0, #0
+#       bx   lr
+#
+# 25000us = 40fps が天井になる。60fps (16667us) の録画では 1 枚おきに条件を
+# 満たさなくなるので、ちょうど 2 枚に 1 枚が捨てられて 30fps になる。実測した
+# min gap 33333us はこれで説明がつく。30fps の素材が普通に再生できるのも同じ
+# 理由。
+#
+# ここではその即値を 8000us (125fps) に書き換えた複製を SD カードに作り、
+# LD_LIBRARY_PATH でそちらを先に読ませる。フラッシュは一切触らない。
+#
+# 元に戻すには: SD の lib/ を消して develop.sh を元のものに戻すだけ。
+#
+# 実機のライブラリは /usr/lib/eyesee-mpp/ にある。ここを find で探すのは
+# やってはいけない: アプリを起動する前に数十秒かかり、その間ゴーグルは起動
+# 画面のまま止まって見える。2026-09-21 に実際にそうなった。場所は分かって
+# いるので決め打ちする。
+
+VO_OFF=27132        # 0x69fc、即値を含む 4 バイトの先頭
+VO_ORIG=a82106e3    # movw r2, #25000  (リトルエンディアン)
+VO_NEW=402f01e3     # movw r2, #8000
+LIBDIR=/mnt/extsd/lib
+REPORT=/mnt/extsd/vo-patch.log
+
+bytes_at() {
+	dd if="$1" bs=1 skip="$VO_OFF" count=4 2>/dev/null | od -An -tx1 | tr -d ' \n\t'
+}
+
+# 成功したときだけ 0 を返す。途中でやめた場合は複製を消すので、呼び出し側は
+# 素の状態で起動すればよい。
+patch_vo() {
+	SRC=
+	for f in /usr/lib/eyesee-mpp/libmpp_vo.so /usr/lib/libmpp_vo.so /lib/libmpp_vo.so; do
+		if [ -f "$f" ]; then
+			SRC="$f"
+			break
+		fi
+	done
+	if [ -z "$SRC" ]; then
+		echo "libmpp_vo.so が見つからない" >> "$REPORT"
+		return 1
+	fi
+	echo "source $SRC" >> "$REPORT"
+
+	mkdir -p "$LIBDIR" 2>/dev/null || return 1
+	cp "$SRC" "$LIBDIR/libmpp_vo.so" 2>/dev/null || return 1
+
+	# 実機のライブラリがリポジトリのものと違うビルドなら、この位置は別の命令
+	# かもしれない。確かめてから書く。
+	HAVE=$(bytes_at "$LIBDIR/libmpp_vo.so")
+	echo "offset $VO_OFF has $HAVE (expected $VO_ORIG)" >> "$REPORT"
+	if [ "$HAVE" != "$VO_ORIG" ]; then
+		echo "一致しないので書き換えない" >> "$REPORT"
+		rm -f "$LIBDIR/libmpp_vo.so"
+		return 1
+	fi
+
+	printf '\100\057\001\343' | dd of="$LIBDIR/libmpp_vo.so" bs=1 seek="$VO_OFF" conv=notrunc 2>/dev/null || return 1
+	NOW=$(bytes_at "$LIBDIR/libmpp_vo.so")
+	echo "patched to $NOW" >> "$REPORT"
+	if [ "$NOW" != "$VO_NEW" ]; then
+		rm -f "$LIBDIR/libmpp_vo.so"
+		return 1
+	fi
+	sync
+	return 0
+}
+
+# 本当に差し替わったのかを、動いているプロセスが mmap しているファイルで
+# 確かめる。アプリは fork して親が抜けるので $! は当てにならない。名前で探す。
+verify_later() {
+	sleep 30
+	PID=
+	for d in /proc/[0-9]*; do
+		if grep -qs HDZGOGGLE "$d/cmdline" 2>/dev/null; then
+			PID=${d#/proc/}
+			break
+		fi
+	done
+	{
+		echo "app pid: ${PID:-not found}"
+		if [ -n "$PID" ]; then
+			echo "LD_LIBRARY_PATH in app: $(tr '\0' '\n' < "/proc/$PID/environ" 2>/dev/null | grep '^LD_LIBRARY_PATH=')"
+			echo "mapped: $(grep -o '[^ ]*libmpp_vo[^ ]*' "/proc/$PID/maps" 2>/dev/null | head -1)"
+		fi
+	} >> "$REPORT"
+	sync
+}
+
+if [ -e /mnt/extsd/HDZGOGGLE ]; then
+	APP=/mnt/extsd/HDZGOGGLE
+else
+	APP=/mnt/app/app/HDZGOGGLE
+fi
+
+echo "--- boot ---" >> "$REPORT"
+echo "inherited LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-(none)}" >> "$REPORT"
+
+if patch_vo; then
+	# 置き換えではなく前に足す。eyesee-mpp の他のライブラリも同じ変数で
+	# 解決されているなら、丸ごと差し替えるとアプリが起動しなくなる。
+	LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	export LD_LIBRARY_PATH
+	echo "LD_LIBRARY_PATH set to $LD_LIBRARY_PATH" >> "$REPORT"
+else
+	echo "パッチなしで起動" >> "$REPORT"
+fi
+sync
+
+"$APP" &
+verify_later &
