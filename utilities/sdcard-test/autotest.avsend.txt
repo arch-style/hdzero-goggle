@@ -1,0 +1,48 @@
+# 統一プレーヤ 実験2: 音声。MPP のプレーヤを使わず、libavformat で読んだ AAC を
+# 未バインドの ADEC でデコードし、AW_MPI_AO_SendFrame で AO に渡す。映像は
+# その音の時計で送る。結果は HDZGOGGLE.log の "VS" / "VS audio" 行。
+#   avsend <file> <ms> [start_ms] [video=0|1 audio=0|1 clock=start|proc avoff=<ms> aacraw=0|1]
+# avsync.ts はカード直下に置く同期確認用の動画（1 秒ごとに 2 コマの白フラッシュと
+# 同じ pts の 40ms のビープ）。utilities/sdcard-test/make-avsync.sh で作る。
+
+# 再生音はメニュー中どの端子にも出ない（ライン出力が切られ、DAC も出力ミキサーから
+# 外されている。元のアプリも同じ）。この間だけ DAC をライン出力へ回す。
+lineout dac
+
+# 1. 録画の音だけ 15 秒: 鳴るか、音の時計が単調時計からずれていくか
+echo phase1 audio-only recording
+avsend hdz_9048.ts 15000 video=0
+wait 2000
+
+# 2. テスト動画の音だけ 8 秒: ビープが 1 秒おきに 8 回
+echo phase2 audio-only beeps
+avsend /mnt/extsd/avsync.ts 8000 video=0
+wait 2000
+
+# 3. 映像と音: 映像を「最初の音が AO に渡った時刻」基準で送る
+echo phase3 av clock=start
+avsend /mnt/extsd/avsync.ts 10000 clock=start
+wait 2000
+
+# 4. 映像と音: 映像を ALSA の再生位置 (hw_ptr) 基準で送る
+echo phase4 av clock=proc
+avsend /mnt/extsd/avsync.ts 10000 clock=proc
+wait 2000
+
+# 5. 途中 (15 秒) から: 再開に相当するコスト
+echo phase5 av start15s
+avsend /mnt/extsd/avsync.ts 6000 15000 clock=proc
+wait 2000
+
+# 6. 比較用: いつもの MPP プレーヤで同じ動画
+echo phase6 mpp
+open /mnt/extsd/avsync.ts
+wait 8000
+exit
+wait 2000
+
+# 7. 実際の録画を映像と音で 60 秒地点から
+echo phase7 recording av
+avsend hdz_9048.ts 8000 60000 clock=proc
+
+lineout off

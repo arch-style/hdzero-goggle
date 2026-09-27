@@ -1,0 +1,25 @@
+# 音の出口の確認。何回目の再生かは画面中央の秒数でわかる。
+#   1回目 0〜6 秒:   右チャンネルも出るか（lineout dac が DACR も入れる）。音量は MPP の 27 のまま
+#   2回目 6〜12 秒:  lineout volume を 31 に上げて、1回目より大きいか
+#   3回目 0〜6 秒:   いつもの MPP プレーヤ。フラッシュとビープが同時か、どちらが先か
+# ミキサーの状態は "AT mixer" 行に残す。
+
+lineout dac
+mixer
+
+echo vol1 stereo 27
+avsend /mnt/extsd/avsync.ts 6000 0
+wait 2000
+
+echo vol2 stereo 31
+avsend /mnt/extsd/avsync.ts 6000 6000 vol=31
+mixer
+wait 2000
+
+echo vol3 mpp sync
+open /mnt/extsd/avsync.ts
+wait 6000
+exit
+
+lineout off
+mixer

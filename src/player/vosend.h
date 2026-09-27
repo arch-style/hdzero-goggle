@@ -29,6 +29,19 @@ typedef struct {
     // AW_MPI_VO_SetChnDispBufNum; the player uses 2. 0 shows the frame no
     // sooner and hands it back 0.2ms after it is sent, while it is on screen.
     int disp_bufs;
+
+    bool video;
+    // Sound too, through asend.h, started once the first picture is up and
+    // from that picture's pts. The picture is then paced by the sound's
+    // clock (asend_clock_t), shown avoff_ms after its pts is heard.
+    bool audio;
+    int clock;
+    int avoff_ms;
+    bool aac_raw;
+    // 'lineout volume' to set once MPP is up, 0 to leave it. Opening MPP
+    // sets it to 27 every time (alsaOpenMixer() in libmedia_mpp.so, a
+    // constant), of a range that goes to 31.
+    int lineout_vol;
 } vosend_opts_t;
 
 const char *vosend_mode_name(int mode);

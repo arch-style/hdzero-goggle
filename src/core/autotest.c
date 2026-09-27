@@ -27,6 +27,14 @@
 //                        play without MPP's player: the stepper's decoder
 //                        into an unbound video output (src/player/vosend.h),
 //                        on the player's screen, then leave it; "VS" lines
+//   avsend <file> <ms> [start_ms] [key=value ...]
+//                        the same with the sound (src/player/asend.h), the
+//                        picture paced by it. Keys: video=0|1 audio=0|1
+//                        clock=start|proc avoff=<ms> aacraw=0|1 extra=<n>
+//                        bufs=<n> mode=paced|free vol=<lineout volume>
+//   lineout dac|off      route played sound to the line out, or put the
+//                        routing back the way the menu leaves it
+//   mixer                every ALSA mixer control and its value, one line each
 //   exit                 leave the player
 //   halt                 stop the script here
 //
@@ -47,9 +55,12 @@
 #include "core/app_state.h"
 #include "core/common.hh"
 #include "driver/beep.h"
+#include "player/asend.h"
 #include "player/vosend.h"
+#include "ui/page_common.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_player.h"
+#include "util/system.h"
 
 #define AUTOTEST_FILE "/mnt/extsd/autotest.txt"
 #define AUTOTEST_RAN "/mnt/extsd/autotest.ran.txt"
@@ -144,7 +155,7 @@ static void at_open(const char *name) {
 static void at_vosend(const char *line) {
     char name[200] = "", mode[16] = "paced";
     char path[300];
-    vosend_opts_t opts = {.run_ms = 5000, .mode = VOSEND_PACED, .disp_bufs = 2};
+    vosend_opts_t opts = {.run_ms = 5000, .mode = VOSEND_PACED, .disp_bufs = 2, .video = true};
 
     sscanf(line, "%*s %199s %d %15s %d %d %d", name, &opts.run_ms, mode, &opts.start_ms,
            &opts.extra_frames, &opts.disp_bufs);
@@ -164,6 +175,131 @@ static void at_vosend(const char *line) {
     vosend_run(path, &opts);
     at_key(DIAL_KEY_PRESS);
     at_sleep_ms(300);
+}
+
+static void at_avsend(const char *line) {
+    char buf[512];
+    char path[300];
+    vosend_opts_t opts = {
+        .run_ms = 5000,
+        .mode = VOSEND_PACED,
+        .disp_bufs = 2,
+        .video = true,
+        .audio = true,
+        .clock = ASEND_CLOCK_PROC,
+    };
+
+    char *save = NULL;
+    snprintf(buf, sizeof(buf), "%s", line);
+    strtok_r(buf, " \t", &save); // the command
+    const char *name = strtok_r(NULL, " \t", &save);
+    const char *ms = strtok_r(NULL, " \t", &save);
+
+    if (!name || !ms) {
+        LOGW("AT avsend: file and ms wanted");
+        return;
+    }
+    opts.run_ms = atoi(ms);
+
+    for (char *tok = strtok_r(NULL, " \t", &save); tok; tok = strtok_r(NULL, " \t", &save)) {
+        char *eq = strchr(tok, '=');
+        if (!eq) {
+            opts.start_ms = atoi(tok);
+            continue;
+        }
+        *eq++ = 0;
+        if (strcmp(tok, "video") == 0) {
+            opts.video = atoi(eq) != 0;
+        } else if (strcmp(tok, "audio") == 0) {
+            opts.audio = atoi(eq) != 0;
+        } else if (strcmp(tok, "clock") == 0) {
+            opts.clock = strcmp(eq, "start") == 0 ? ASEND_CLOCK_START : ASEND_CLOCK_PROC;
+        } else if (strcmp(tok, "avoff") == 0) {
+            opts.avoff_ms = atoi(eq);
+        } else if (strcmp(tok, "aacraw") == 0) {
+            opts.aac_raw = atoi(eq) != 0;
+        } else if (strcmp(tok, "extra") == 0) {
+            opts.extra_frames = atoi(eq);
+        } else if (strcmp(tok, "bufs") == 0) {
+            opts.disp_bufs = atoi(eq);
+        } else if (strcmp(tok, "vol") == 0) {
+            opts.lineout_vol = atoi(eq);
+        } else if (strcmp(tok, "mode") == 0 && vosend_mode_parse(eq) >= 0) {
+            opts.mode = vosend_mode_parse(eq);
+        } else {
+            LOGW("AT avsend: unknown '%s'", tok);
+        }
+    }
+    if (!at_path(name, path, sizeof(path))) {
+        return;
+    }
+
+    at_open_screen(path, true);
+    at_sleep_ms(300);
+    vosend_run(path, &opts);
+    at_key(DIAL_KEY_PRESS);
+    at_sleep_ms(300);
+}
+
+// Played sound reaches no jack otherwise, in this fork and in the stock app
+// alike: the menu turns the line out off (dvr_enable_line_out(false)), and
+// the only time it is turned on, for an analog source, the DAC is taken out
+// of the output mixer ("out_dac_off") so that just the line in goes through.
+// Measured: ALSA running and hw_ptr advancing through a whole run, and
+// nothing in the headphones, MPP's own player included.
+//
+// The right channel needs one more switch that audio_sel.sh has commented
+// out: 'DACR Mixer AIF1DA0R Switch' is off from boot, where its left twin is
+// on, so the right DAC had nothing to play (the mixer dump of the first run
+// that was heard, which was heard quietly and, it turns out, left only).
+//
+// "off" leaves it as the menu does. dvr_enable_line_out() only touches the
+// mixer on a change it knows of and it last knew "off", so the next analog
+// source sets everything, the line in included, from scratch.
+#define AT_DACR_SWITCH "amixer -q cset name='DACR Mixer AIF1DA0R Switch' "
+
+static void at_lineout(const char *how) {
+    static const char *const dac[] = {"out_on", "out_linein_off", "out_dac_on"};
+    static const char *const off[] = {"out_dac_off", "out_linein_on", "out_off"};
+    const bool on = strcmp(how, "dac") == 0;
+    const char *const *steps = on ? dac : off;
+    char cmd[128];
+
+    if (!on && strcmp(how, "off") != 0) {
+        LOGW("AT lineout: dac or off, not '%s'", how);
+        return;
+    }
+    for (int i = 0; i < 3; i++) {
+        snprintf(cmd, sizeof(cmd), "%s %s", AUDIO_SEL_SH, steps[i]);
+        system_exec(cmd);
+    }
+    system_exec(on ? AT_DACR_SWITCH "1" : AT_DACR_SWITCH "0");
+}
+
+// amixer prints three lines a control (numid and name, type, values); they
+// go to the log as one: "AT mixer 'name' values=...".
+static void at_mixer(void) {
+    FILE *fp = popen("amixer contents 2>&1", "r");
+    char line[256], name[160] = "";
+    int count = 0;
+
+    if (!fp) {
+        LOGW("AT mixer: cannot run amixer");
+        return;
+    }
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = 0;
+        const char *n = strstr(line, "name=");
+        const char *v = strstr(line, ": values=");
+        if (n) {
+            snprintf(name, sizeof(name), "%s", n + 5);
+        } else if (v && name[0]) {
+            LOGI("AT mixer %s %s", name, v + 2);
+            name[0] = 0;
+            count++;
+        }
+    }
+    LOGI("AT mixer done, %d controls, amixer exit %d", count, pclose(fp));
 }
 
 static void at_wait_resume(int timeout_ms) {
@@ -281,6 +417,12 @@ static bool at_run(int i, char *line) {
         pthread_mutex_unlock(&lvgl_mutex);
     } else if (strcmp(op, "vosend") == 0) {
         at_vosend(line);
+    } else if (strcmp(op, "avsend") == 0) {
+        at_avsend(line);
+    } else if (strcmp(op, "lineout") == 0) {
+        at_lineout(a1);
+    } else if (strcmp(op, "mixer") == 0) {
+        at_mixer();
     } else if (strcmp(op, "echo") == 0) {
         // already logged by at_log_cmd
     } else if (strcmp(op, "halt") == 0) {

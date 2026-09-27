@@ -3,6 +3,8 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -14,6 +16,7 @@
 #include <mpi_vdec.h>
 #include <mpi_vo.h>
 
+#include "asend.h"
 #include "framestep.h"
 
 // What was read out of libmpp_vo.so before writing this, so that the numbers
@@ -50,6 +53,9 @@
 
 #define VOSEND_sendWAIT_MS 100
 #define VOSEND_stopWAIT_MS 500
+
+// How long the picture waits for the sound to start before going on without.
+#define VOSEND_audioWAIT_MS 2000
 
 #if defined HDZBOXPRO
 #define VOSEND_WIDTH  1280
@@ -282,6 +288,57 @@ static void vosend_closeVo(VoSend_t *vs) {
     AW_MPI_VO_Disable(vs->voDev);
 }
 
+// When to show the frame with this pts: avoff after the sound reaches it.
+// Waits for the sound to have a clock at all, up to the deadline; -1 when it
+// did not get one.
+static int64_t vosend_audioDue(ASend_t *as, const vosend_opts_t *opts, uint64_t pts,
+                               int64_t deadlineUs) {
+    for (;;) {
+        const int64_t now = vosend_nowUs();
+        int64_t heard;
+
+        if (asend_audible(as, opts->clock, now, &heard)) {
+            return now + ((int64_t)pts - heard) + (int64_t)opts->avoff_ms * 1000;
+        }
+        if (now > deadlineUs) {
+            return -1;
+        }
+        vosend_sleepUntil(now + 2000);
+    }
+}
+
+// Sound alone, for as long as asked, a line a second.
+static bool vosend_audioOnly(const char *path, const vosend_opts_t *opts) {
+    ASend_t *as = asend_open(path, opts->start_ms, opts->aac_raw);
+
+    if (!as) {
+        return false;
+    }
+
+    const int64_t t0 = vosend_nowUs();
+    int64_t next = t0 + 1000000;
+
+    for (;;) {
+        const int64_t now = vosend_nowUs();
+
+        if (now - t0 >= (int64_t)opts->run_ms * 1000) {
+            break;
+        }
+        if (now >= next) {
+            asend_log(as, now);
+            next += 1000000;
+        }
+        vosend_sleepUntil(now + 20000);
+        // Keeps ALSA's account fresh between the lines, as the picture would.
+        int64_t heard;
+        asend_audible(as, ASEND_CLOCK_PROC, vosend_nowUs(), &heard);
+    }
+
+    asend_log(as, vosend_nowUs());
+    asend_close(as);
+    return true;
+}
+
 bool vosend_run(const char *path, const vosend_opts_t *opts) {
     VoSend_t vs;
     MPP_SYS_CONF_S sysConf;
@@ -292,9 +349,11 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
     vs.voLayer = MM_INVALID_CHN;
     vs.voChn = MM_INVALID_CHN;
 
-    LOGI("VS begin file=%s mode=%s run_ms=%d start_ms=%d extra=%d bufs=%d",
+    LOGI("VS begin file=%s mode=%s run_ms=%d start_ms=%d extra=%d bufs=%d video=%d audio=%d "
+         "clock=%s avoff=%dms aac_raw=%d",
          path, vosend_mode_name(mode), opts->run_ms, opts->start_ms, opts->extra_frames,
-         opts->disp_bufs);
+         opts->disp_bufs, opts->video, opts->audio,
+         opts->clock == ASEND_CLOCK_PROC ? "proc" : "start", opts->avoff_ms, opts->aac_raw);
 
     const int64_t tOpen = vosend_nowUs();
 
@@ -302,6 +361,22 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
     sysConf.nAlignWidth = 32;
     AW_MPI_SYS_SetConf(&sysConf);
     AW_MPI_SYS_Init();
+
+    if (opts->lineout_vol > 0) {
+        char cmd[96];
+        const int64_t t = vosend_nowUs();
+        snprintf(cmd, sizeof(cmd), "amixer -q cset name='lineout volume' %d", opts->lineout_vol);
+        const int ret = system(cmd);
+        LOGI("VS lineout volume %d: %d, %dms", opts->lineout_vol, ret,
+             (int)((vosend_nowUs() - t) / 1000));
+    }
+
+    if (!opts->video) {
+        const bool ok = opts->audio && vosend_audioOnly(path, opts);
+        AW_MPI_SYS_Exit();
+        pthread_mutex_destroy(&vs.lock);
+        return ok;
+    }
 
     vs.fs = framestep_open_ex(path, opts->extra_frames);
     if (!vs.fs) {
@@ -328,6 +403,9 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
     ERRORTYPE lastErr = SUCCESS;
     Span_t dec = {0}, send = {0}, lateness = {0}, lag = {0}, sendGap = {0};
     int heldMax = 0;
+    ASend_t *as = NULL;
+    int64_t audioDeadline = 0;
+    Span_t avStart = {0}, avProc = {0}; // frame pts less what was heard, when sent
     int64_t base = -1, lastSendUs = 0, tFirstSend = 0;
     uint64_t pts0 = 0, lastPts = 0;
     int64_t tBegin = 0;
@@ -379,7 +457,23 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
         }
 
         if (mode != VOSEND_FREE) {
-            const int64_t due = base + (int64_t)(pts - pts0);
+            int64_t due = -1;
+
+            if (as) {
+                due = vosend_audioDue(as, opts, pts, audioDeadline);
+                if (due < 0) {
+                    LOGW("VS no sound clock after %dms, pacing by the wall clock",
+                         VOSEND_audioWAIT_MS);
+                    asend_log(as, vosend_nowUs());
+                    asend_close(as);
+                    as = NULL;
+                    base = vosend_nowUs();
+                    pts0 = pts;
+                }
+            }
+            if (due < 0) {
+                due = base + (int64_t)(pts - pts0);
+            }
             const int64_t now = vosend_nowUs();
 
             if (now < due) {
@@ -409,6 +503,16 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
         }
         if (frames > 1 && decUs > secDecMax) {
             secDecMax = decUs;
+        }
+
+        if (as) {
+            int64_t heard;
+            if (asend_audible(as, ASEND_CLOCK_START, t, &heard)) {
+                span_add(&avStart, (int64_t)pts - heard);
+            }
+            if (asend_audible(as, ASEND_CLOCK_PROC, t, &heard)) {
+                span_add(&avProc, (int64_t)pts - heard);
+            }
         }
 
         if (ret == SUCCESS) {
@@ -443,6 +547,15 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
             framestep_put_frame(vs.fs, &frame);
         }
 
+        // The first picture is up: now the sound, from that picture on.
+        if (frames == 1 && opts->audio) {
+            as = asend_open(path, firstMs, opts->aac_raw);
+            audioDeadline = vosend_nowUs() + VOSEND_audioWAIT_MS * 1000;
+            if (!as) {
+                LOGW("VS no sound, pacing by the wall clock");
+            }
+        }
+
         {
             uint64_t shownUs = 0;
             if (AW_MPI_VO_GetChnPts(vs.voLayer, vs.voChn, &shownUs) == SUCCESS && shownUs) {
@@ -463,6 +576,9 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
                  "send_max=%dus at=%dms shown=%dms",
                  (int)((now - tBegin) / 1000000), secSent, secGated, secLate, out, released,
                  (int)secDecMax, (int)secSendMax, (int)(pts / 1000), (int)(lastPts / 1000));
+            if (as) {
+                asend_log(as, now);
+            }
             secStart = now;
             secSent = secGated = secLate = 0;
             secDecMax = secSendMax = 0;
@@ -486,6 +602,10 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
     memcpy(hist, vs.releaseHist, sizeof(hist));
     pthread_mutex_unlock(&vs.lock);
 
+    if (as) {
+        asend_log(as, vosend_nowUs());
+        asend_close(as);
+    }
     vosend_closeVo(&vs);
     framestep_close(vs.fs);
     AW_MPI_SYS_Exit();
@@ -513,6 +633,13 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
          (int)dec.min, (int)span_avg(&dec), (int)dec.max, (int)send.min, (int)span_avg(&send),
          (int)send.max, late, (int)span_avg(&lateness), (int)lateness.max, (int)span_avg(&lag),
          (int)lag.max);
+    if (opts->audio) {
+        LOGI("VS summary av (pts - heard at send) start min/avg/max=%d/%d/%dms n=%d, "
+             "proc min/avg/max=%d/%d/%dms n=%d",
+             (int)(avStart.min / 1000), (int)(span_avg(&avStart) / 1000),
+             (int)(avStart.max / 1000), avStart.n, (int)(avProc.min / 1000),
+             (int)(span_avg(&avProc) / 1000), (int)(avProc.max / 1000), avProc.n);
+    }
     LOGI("VS summary first_render=%dms after the first send, open_to_first_send=%dms",
          firstRenderUs && tFirstSend ? (int)((firstRenderUs - tFirstSend) / 1000) : -1,
          tFirstSend ? (int)((tFirstSend - tOpen) / 1000) : -1);
