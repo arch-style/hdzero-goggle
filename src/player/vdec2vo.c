@@ -576,3 +576,13 @@ ERRORTYPE vdec2vo_checkEof(Vdec2VoContext_t *vvCtx) {
 bool vdec2vo_isEOF(Vdec2VoContext_t *vvCtx) {
     return vvCtx->flagEOF & VDEC2VO_voEOF;
 }
+
+// The timestamp of the picture the output has on screen, which is not the
+// media clock: the clock runs a frame or two ahead of what is shown.
+ERRORTYPE vdec2vo_shownPts(Vdec2VoContext_t *vvCtx, uint64_t *ptsUs) {
+    if (!vvCtx || vvCtx->voLayer < 0 || vvCtx->voChn < 0) {
+        return FAILURE;
+    }
+
+    return AW_MPI_VO_GetChnPts(vvCtx->voLayer, vvCtx->voChn, ptsUs);
+}

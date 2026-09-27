@@ -86,6 +86,7 @@ ERRORTYPE vdec2vo_currentMediaTime(Vdec2VoContext_t *vvCtx, int *mediaTime);
 ERRORTYPE vdec2vo_checkEof(Vdec2VoContext_t *vvCtx);
 ERRORTYPE vdec2vo_setVdecEof(Vdec2VoContext_t *vvCtx);
 bool vdec2vo_isEOF(Vdec2VoContext_t *vvCtx);
+ERRORTYPE vdec2vo_shownPts(Vdec2VoContext_t *vvCtx, uint64_t *ptsUs);
 
 #ifdef __cplusplus
 }

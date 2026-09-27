@@ -158,6 +158,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 if(EMULATOR_BUILD)
 	target_link_libraries(${PROJECT_NAME} PRIVATE ${SDL2_LIBRARIES})
+else()
+	# The player steps frames with its own decoder, because MPP cannot be
+	# asked for one. See src/player/framestep.h. Goes with SRC_FILES_PLAYER,
+	# which the emulator build leaves out.
+	target_link_libraries(${PROJECT_NAME} PRIVATE ffmpeg)
 endif()
 
 if(NOT EMULATOR_BUILD)

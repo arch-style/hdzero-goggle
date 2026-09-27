@@ -40,6 +40,10 @@ media_t *media_instantiate(char *filename, notify_cb_t notify);
 void media_exit(media_t *media);
 void media_control(media_t *media, player_cmd_t *cmd);
 uint32_t media_frame_interval_ms(media_t *media);
+// The position of the picture on screen, in ms, or -1 when there is none.
+int media_shown_ms(media_t *media);
+// The media clock, in ms, or -1 while it is not running.
+int media_clock_ms(media_t *media);
 uint32_t media_step_frame(media_t *media, uint32_t frame_ms);
 uint32_t media_seek_show(media_t *media, uint32_t seekto, uint32_t frame_ms);
 

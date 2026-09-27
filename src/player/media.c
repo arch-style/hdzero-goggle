@@ -368,6 +368,42 @@ uint32_t media_seek_show(media_t *media, uint32_t seekto, uint32_t frame_ms) {
     return (uint32_t)playCtx->playingTime;
 }
 
+// Where a frame step starts from. The media clock is the wrong answer: it
+// runs ahead of the picture by a frame or two, so a step that started from it
+// moved two or three frames the first time. The output knows what it is
+// showing.
+int media_shown_ms(media_t *media) {
+    uint64_t ptsUs = 0;
+
+    if (!media) {
+        return -1;
+    }
+
+    PlayContext_t *playCtx = (PlayContext_t *)media->context;
+
+    if (vdec2vo_shownPts(playCtx->vv, &ptsUs) != SUCCESS) {
+        return -1;
+    }
+
+    return (int)(ptsUs / 1000);
+}
+
+int media_clock_ms(media_t *media) {
+    int t = -1;
+
+    if (!media) {
+        return -1;
+    }
+
+    PlayContext_t *playCtx = (PlayContext_t *)media->context;
+
+    if (vdec2vo_currentMediaTime(playCtx->vv, &t) != SUCCESS || t < 0) {
+        return -1;
+    }
+
+    return t;
+}
+
 uint32_t media_frame_interval_ms(media_t *media) {
     if (!media) {
         return MEDIA_defFRAME_MS;
