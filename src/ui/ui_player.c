@@ -104,6 +104,11 @@ static lv_img_dsc_t pb_frame_dsc;
 // put the first step up to a second behind where the eye was.
 static int pb_paused_at = -1;
 
+// Open with the bar and nothing playing under it, for an autotest that drives
+// the output itself (src/player/vosend.c). Only a long press is taken then:
+// the rest of the keys would reach for a player that is not there.
+static bool pb_bare = false;
+
 static void pb_pause(void);
 
 static bool stars_positioned_on_timeline = false;
@@ -886,6 +891,9 @@ uint8_t mplayer_on_key(uint8_t key) {
 
     LOGI("mplayer_on_key: %d", key);
 
+    if (pb_bare && key != DIAL_KEY_PRESS)
+        return 0;
+
     switch (key) {
     case DIAL_KEY_PRESS:
         mplayer_exit();
@@ -1268,6 +1276,7 @@ void mplayer_exit() {
     framestep_close(pb_stepper);
     pb_stepper = NULL;
     pb_path[0] = '\0';
+    pb_bare = false;
 
     free_mplayer();
 }
@@ -1279,6 +1288,12 @@ void mplayer_exit() {
 void mplayer_autotest_open(const char *path) {
     // What page_playback does on a click, without the file list.
     mplayer_file((char *)path);
+    app_state_push(APP_STATE_PLAYBACK);
+}
+
+void mplayer_autotest_open_bare(void) {
+    init_mplayer();
+    pb_bare = true;
     app_state_push(APP_STATE_PLAYBACK);
 }
 

@@ -23,6 +23,10 @@
 //   set <name> <value>   a player tunable (see pb_tune[] in ui_player.c)
 //   loop <n> ... end     repeat the block; nests
 //   echo <text>          a marker line in the log
+//   vosend <file> <ms> [paced|free|gate] [start_ms] [extra] [bufs]
+//                        play without MPP's player: the stepper's decoder
+//                        into an unbound video output (src/player/vosend.h),
+//                        on the player's screen, then leave it; "VS" lines
 //   exit                 leave the player
 //   halt                 stop the script here
 //
@@ -43,6 +47,7 @@
 #include "core/app_state.h"
 #include "core/common.hh"
 #include "driver/beep.h"
+#include "player/vosend.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_player.h"
 
@@ -85,19 +90,21 @@ static void at_key(uint8_t key) {
     pthread_mutex_unlock(&lvgl_mutex);
 }
 
-static void at_open(const char *name) {
-    char path[300];
-
+static bool at_path(const char *name, char *path, size_t size) {
     if (strchr(name, '/')) {
-        snprintf(path, sizeof(path), "%s", name);
+        snprintf(path, size, "%s", name);
     } else {
-        snprintf(path, sizeof(path), AUTOTEST_MEDIA_DIR "%s", name);
+        snprintf(path, size, AUTOTEST_MEDIA_DIR "%s", name);
     }
     if (access(path, R_OK) != 0) {
         LOGW("AT open: no such file %s", path);
-        return;
+        return false;
     }
+    return true;
+}
 
+// The player's screen, playing the file, or with nothing under it when bare.
+static void at_open_screen(const char *path, bool bare) {
     pthread_mutex_lock(&lvgl_mutex);
     if (mplayer_is_open()) {
         // Close what is playing first.
@@ -118,8 +125,45 @@ static void at_open(const char *name) {
     if (main_menu_is_shown()) {
         main_menu_show(false);
     }
-    mplayer_autotest_open(path);
+    if (bare) {
+        mplayer_autotest_open_bare();
+    } else {
+        mplayer_autotest_open(path);
+    }
     pthread_mutex_unlock(&lvgl_mutex);
+}
+
+static void at_open(const char *name) {
+    char path[300];
+
+    if (at_path(name, path, sizeof(path))) {
+        at_open_screen(path, false);
+    }
+}
+
+static void at_vosend(const char *line) {
+    char name[200] = "", mode[16] = "paced";
+    char path[300];
+    vosend_opts_t opts = {.run_ms = 5000, .mode = VOSEND_PACED, .disp_bufs = 2};
+
+    sscanf(line, "%*s %199s %d %15s %d %d %d", name, &opts.run_ms, mode, &opts.start_ms,
+           &opts.extra_frames, &opts.disp_bufs);
+    opts.mode = vosend_mode_parse(mode);
+    if (opts.mode < 0) {
+        LOGW("AT vosend: unknown mode '%s'", mode);
+        return;
+    }
+    if (!at_path(name, path, sizeof(path))) {
+        return;
+    }
+
+    at_open_screen(path, true);
+    at_sleep_ms(300);
+    // Not under the LVGL lock: it runs for seconds, and the screen has to
+    // keep drawing over the video layer as it would in playback.
+    vosend_run(path, &opts);
+    at_key(DIAL_KEY_PRESS);
+    at_sleep_ms(300);
 }
 
 static void at_wait_resume(int timeout_ms) {
@@ -235,6 +279,8 @@ static bool at_run(int i, char *line) {
         pthread_mutex_lock(&lvgl_mutex);
         mplayer_tune_set(a1, atoi(a2));
         pthread_mutex_unlock(&lvgl_mutex);
+    } else if (strcmp(op, "vosend") == 0) {
+        at_vosend(line);
     } else if (strcmp(op, "echo") == 0) {
         // already logged by at_log_cmd
     } else if (strcmp(op, "halt") == 0) {

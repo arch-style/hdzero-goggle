@@ -732,6 +732,10 @@ static bool framestep_seekBefore(FrameStep_t *fs, int ms) {
 ///////////////////////////////////////////////////////////////////////////////
 
 FrameStep_t *framestep_open(const char *path) {
+    return framestep_open_ex(path, 0);
+}
+
+FrameStep_t *framestep_open_ex(const char *path, int extra_frames) {
     FrameStep_t *fs = calloc(1, sizeof(*fs));
     if (!fs) {
         return NULL;
@@ -802,6 +806,7 @@ FrameStep_t *framestep_open(const char *path) {
     attr.mOutputPixelFormat = MM_PIXEL_FORMAT_YVU_PLANAR_420;
     attr.mVdecVideoAttr.mMode = VIDEO_MODE_FRAME;
     attr.mVdecVideoAttr.mSupportBFrame = 1;
+    attr.mExtraFrameNum = extra_frames > 0 ? extra_frames : 0;
 
     // Channel 0 is the player's. Take the first one that is free and leave it
     // unbound, which is what makes GetImage legal on it.
@@ -835,8 +840,8 @@ FrameStep_t *framestep_open(const char *path) {
         goto failed;
     }
 
-    LOGI("stepping %s, codec %d %dx%d on vdec channel %d",
-         path, par->codec_id, par->width, par->height, fs->vdecChn);
+    LOGI("stepping %s, codec %d %dx%d on vdec channel %d, %d extra frames",
+         path, par->codec_id, par->width, par->height, fs->vdecChn, attr.mExtraFrameNum);
 
     return fs;
 
@@ -910,12 +915,10 @@ int framestep_frame_rate(FrameStep_t *fs) {
     return (int)av_rescale(1000, rate.num, rate.den);
 }
 
-bool framestep_to(FrameStep_t *fs, int ms, FrameStepPic_t *pic) {
+// The first frame at or after this position, left out of the pool for the
+// caller to publish or hand on.
+static bool framestep_reach(FrameStep_t *fs, int ms, VIDEO_FRAME_INFO_S *out) {
     VIDEO_FRAME_INFO_S frame;
-
-    if (!fs || !pic) {
-        return false;
-    }
 
     // A transport stream seek lands wherever, and the decoder then starts at
     // the next keyframe -- which is past the target whenever the landing was
@@ -940,7 +943,8 @@ bool framestep_to(FrameStep_t *fs, int ms, FrameStepPic_t *pic) {
             // Started before the target; decode forward to it.
             for (;;) {
                 if (framestep_frameMs(&frame) >= ms) {
-                    return framestep_publish(fs, &frame, pic);
+                    *out = frame;
+                    return true;
                 }
                 framestep_release(fs, &frame);
                 if (!framestep_decodeOne(fs, &frame)) {
@@ -960,6 +964,47 @@ bool framestep_to(FrameStep_t *fs, int ms, FrameStepPic_t *pic) {
 
     LOGD("could not reach %dms", ms);
     return false;
+}
+
+bool framestep_to(FrameStep_t *fs, int ms, FrameStepPic_t *pic) {
+    VIDEO_FRAME_INFO_S frame;
+
+    if (!fs || !pic) {
+        return false;
+    }
+    if (!framestep_reach(fs, ms, &frame)) {
+        return false;
+    }
+
+    return framestep_publish(fs, &frame, pic);
+}
+
+bool framestep_get_frame(FrameStep_t *fs, VIDEO_FRAME_INFO_S *frame) {
+    if (!fs || !frame) {
+        return false;
+    }
+
+    if (fs->hasPending) {
+        *frame = fs->pending;
+        fs->hasPending = false;
+        return true;
+    }
+
+    return framestep_decodeOne(fs, frame);
+}
+
+bool framestep_get_frame_at(FrameStep_t *fs, int ms, VIDEO_FRAME_INFO_S *frame) {
+    if (!fs || !frame) {
+        return false;
+    }
+
+    return framestep_reach(fs, ms, frame);
+}
+
+void framestep_put_frame(FrameStep_t *fs, VIDEO_FRAME_INFO_S *frame) {
+    if (fs && frame) {
+        framestep_release(fs, frame);
+    }
 }
 
 bool framestep_next(FrameStep_t *fs, FrameStepPic_t *pic) {

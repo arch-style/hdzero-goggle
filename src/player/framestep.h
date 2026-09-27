@@ -51,6 +51,9 @@ typedef struct
 } FrameStepPic_t;
 
 FrameStep_t *framestep_open(const char *path);
+// The same, with this many frame buffers beyond what the stream needs, for
+// frames handed on to the video output and held there.
+FrameStep_t *framestep_open_ex(const char *path, int extra_frames);
 void framestep_close(FrameStep_t *fs);
 
 // Scale decoded frames to this size on the way out. Nearest neighbour, done in
@@ -76,6 +79,16 @@ bool framestep_to(FrameStep_t *fs, int ms, FrameStepPic_t *pic);
 // came from. Stepping back has to decode again from the preceding keyframe.
 bool framestep_next(FrameStep_t *fs, FrameStepPic_t *pic);
 bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic);
+
+// The decoder's own frames, for handing to the video output as they are
+// rather than converting them. A frame stays out of the decoder's pool until
+// it is given back with framestep_put_frame(), which is safe from another
+// thread, such as the output's release callback.
+struct VIDEO_FRAME_INFO_S;
+bool framestep_get_frame(FrameStep_t *fs, struct VIDEO_FRAME_INFO_S *frame);
+// The first frame at or after this position.
+bool framestep_get_frame_at(FrameStep_t *fs, int ms, struct VIDEO_FRAME_INFO_S *frame);
+void framestep_put_frame(FrameStep_t *fs, struct VIDEO_FRAME_INFO_S *frame);
 
 #ifdef __cplusplus
 }

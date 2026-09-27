@@ -61,6 +61,9 @@ void mplayer_file(char *fname);
 
 // For core/autotest.c; all under lvgl_mutex.
 void mplayer_autotest_open(const char *path);
+// The player's screen with nothing playing, for a test that drives the video
+// output itself. Leave it with a long press, as usual.
+void mplayer_autotest_open_bare(void);
 bool mplayer_is_open(void);
 bool mplayer_is_playing(void);
 bool mplayer_is_resuming(void);

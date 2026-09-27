@@ -1,0 +1,39 @@
+# 統一プレーヤ 実験1: MPP のプレーヤを使わず、自前の VDEC から未バインドの VO に
+# AW_MPI_VO_SendFrame でフレームを渡す。結果は HDZGOGGLE.log の "VS" 行。
+#   vosend <file> <ms> [paced|free|gate] [start_ms] [extra] [bufs]
+
+# 1. 本題: pts どおりの速さで 10 秒。映るか、何 fps で出るか
+echo phase1 paced
+vosend hdz_9048.ts 10000 paced
+wait 1000
+
+# 2. 上限: 待たずに次々渡す（映像は早送りに見えるはず）
+echo phase2 free
+vosend hdz_9048.ts 5000 free
+wait 1000
+
+# 3. 25ms ゲートの確認: pts を 1/4 に詰める。パッチ済み 8ms なら約半分が 0xa00f8010 で断られる
+echo phase3 gate
+vosend hdz_9048.ts 4000 gate
+wait 1000
+
+# 4. 途中 (60 秒) から開始: 再開に相当するコスト
+echo phase4 start60s
+vosend hdz_9048.ts 5000 paced 60000
+wait 1000
+
+# 5. デコーダの追加フレームバッファ 3 枚
+echo phase5 extra3
+vosend hdz_9048.ts 5000 paced 0 3
+wait 1000
+
+# 6. VO の表示バッファ 0 枚（プレーヤは 2）
+echo phase6 bufs0
+vosend hdz_9048.ts 5000 paced 0 0 0
+wait 1000
+
+# 7. 後始末の確認: 普通の MPP 再生がまだ動くか
+echo phase7 mpp
+open hdz_0018.ts
+wait 3000
+exit
