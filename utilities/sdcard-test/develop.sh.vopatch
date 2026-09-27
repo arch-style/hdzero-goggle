@@ -79,17 +79,35 @@ patch_vo() {
 	return 0
 }
 
-# 本当に差し替わったのかを、動いているプロセスが mmap しているファイルで
-# 確かめる。アプリは fork して親が抜けるので $! は当てにならない。名前で探す。
-verify_later() {
-	sleep 30
-	PID=
+# アプリは fork して親が抜けるので $! は当てにならない。名前で探す。
+app_pid() {
 	for d in /proc/[0-9]*; do
 		if grep -qs HDZGOGGLE "$d/cmdline" 2>/dev/null; then
-			PID=${d#/proc/}
-			break
+			echo "${d#/proc/}"
+			return 0
 		fi
 	done
+	return 1
+}
+
+# 起動しなかったときの保険。fork は libavcodec/libavformat/libavutil を
+# 新たに要求する (コマ送りを自前デコードするため) ので、ローダがそれを
+# 解決できないと何も表示されないまま止まる。そうなったら純正に戻す。
+fallback_if_dead() {
+	sleep 8
+	if app_pid > /dev/null; then
+		return 0
+	fi
+	echo "fork が起動しなかったので純正で起動する" >> "$REPORT"
+	sync
+	/mnt/app/app/HDZGOGGLE &
+}
+
+# 本当に差し替わったのかを、動いているプロセスが mmap しているファイルで
+# 確かめる。
+verify_later() {
+	sleep 30
+	PID=$(app_pid)
 	{
 		echo "app pid: ${PID:-not found}"
 		if [ -n "$PID" ]; then
@@ -121,4 +139,7 @@ fi
 sync
 
 "$APP" &
+if [ "$APP" = /mnt/extsd/HDZGOGGLE ]; then
+	fallback_if_dead &
+fi
 verify_later &
