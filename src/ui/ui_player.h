@@ -59,6 +59,16 @@ uint8_t mplayer_on_key(uint8_t key);
 void mplayer_set_time(uint32_t now, uint32_t duration);
 void mplayer_file(char *fname);
 
+// For core/autotest.c; all under lvgl_mutex.
+void mplayer_autotest_open(const char *path);
+bool mplayer_is_open(void);
+bool mplayer_is_playing(void);
+bool mplayer_is_resuming(void);
+int mplayer_position_ms(void);
+void mplayer_set_step_size(int index); // pb_step_t
+void mplayer_set_speed(int index);     // pb_speed_t
+bool mplayer_tune_set(const char *name, int value);
+
 #ifdef __cplusplus
 }
 #endif
