@@ -1,0 +1,56 @@
+# 自動テストのシナリオ例。SD ルートに autotest.txt という名前で置くと、起動の
+# 5 秒後に実行され、autotest.ran.txt に改名される。文法は src/core/autotest.c 冒頭。
+# 結果は HDZGOGGLE.log の "AT" 行に出る。集計は
+#   utilities/sdcard-test/autotest-report.py -v HDZGOGGLE.log
+
+# 一時停止 → コマ送り 3 → コマ戻し 2 → 再開、を 1 ファイルにつき 6 回
+size frame
+stepgap 400
+
+open hdz_0018.ts
+wait 3000
+loop 6
+  pause
+  wait 500
+  step +3
+  step -2
+  play
+  waitresume 12000
+  wait 2500
+end
+exit
+wait 1500
+
+open hdz_9048.ts
+wait 3000
+loop 6
+  pause
+  wait 500
+  step +1
+  play
+  waitresume 12000
+  wait 2500
+end
+exit
+wait 1500
+
+# パラメータ掃引の例: 再開の狙い位置を変えて比べる
+open hdz_0012.ts
+wait 3000
+set resume_aim 300
+loop 4
+  pause
+  wait 500
+  play
+  waitresume 12000
+  wait 2500
+end
+set resume_aim 700
+loop 4
+  pause
+  wait 500
+  play
+  waitresume 12000
+  wait 2500
+end
+exit

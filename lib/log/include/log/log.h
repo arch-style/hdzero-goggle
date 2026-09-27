@@ -21,5 +21,6 @@ int log_printf(const char *file, const char *func, int line, const int level, co
 bool log_file_opened();
 bool log_file_open(const char *filename);
 void log_file_close();
+void log_crash_flush(void);
 
 #endif

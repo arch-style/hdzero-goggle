@@ -21,6 +21,8 @@ SDL_mutex *global_sdl_mutex;
 
 #include "bmi270/accel_gyro.h"
 #include "core/app_state.h"
+#include "core/autotest.h"
+#include "core/crash.h"
 #include "core/common.hh"
 #include "core/elrs.h"
 #include "core/ht.h"
@@ -357,6 +359,7 @@ int main(int argc, char *argv[]) {
     // Named so an i2c contention report can be read: everything from here to
     // the picture, the OLED and display set-up included, is this thread.
     log_thread_id("main");
+    crash_handler_install();
 
     lvgl_init();
     LOGI("boot phase: lvgl %ums", time_ms() - step_ms);
@@ -472,6 +475,7 @@ int main(int argc, char *argv[]) {
 
     // 10. Execute main loop
     g_init_done = 1;
+    autotest_start(); // no-op without /mnt/extsd/autotest.txt
     for (;;) {
         // The status bar and the source status page rewrite their labels on
         // every pass, and a rewrite invalidates them whether the text changed

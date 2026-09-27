@@ -146,6 +146,16 @@ bool log_file_open(const char *filename) {
     return retval;
 }
 
+// For a crash handler: write out whatever the sync thread has not yet, without
+// the mutex (the crashing thread may hold it). Best effort by design.
+void log_crash_flush(void) {
+    if (fd_log_file >= 0 && offline_offset > 0) {
+        write(fd_log_file, offline_buffer, offline_offset);
+        offline_offset = 0;
+        fsync(fd_log_file);
+    }
+}
+
 void log_file_close() {
     pthread_mutex_lock(&log_mutex);
 
