@@ -1,0 +1,45 @@
+# 端の修正の確認と、libmpp_vo のパッチなしでの再生（カード直下に novopatch を置いて起動）。
+#   1 先頭で戻す→送る（同じコマが続かないか）、末尾を越えるシーク（最後のコマが出るか）→送る→戻す→再生
+#   2 1 秒未満のファイル（音を待たずに進むか）
+#   3 60fps をパッチなしで 15 秒、戻し・送り、再開。出力に断られたコマは "output refused the frame"
+size frame
+stepgap 150
+
+echo 1 edges
+open hdz_0018.ts
+wait 1000
+pause
+size 30s
+down 1
+wait 600
+size frame
+step -2
+step +3
+size 30s
+up 1
+wait 600
+size frame
+step +2
+step -2
+play
+waitresume 5000
+wait 1500
+exit
+wait 1000
+
+echo 2 tiny
+open hdz_9054.ts
+wait 1500
+exit
+wait 1000
+
+echo 3 no patch 60fps
+open hdz_9048.ts
+wait 15000
+pause
+step -5
+step +5
+play
+waitresume 5000
+wait 3000
+exit

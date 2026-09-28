@@ -23,6 +23,8 @@
 # LD_LIBRARY_PATH でそちらを先に読ませる。フラッシュは一切触らない。
 #
 # 元に戻すには: SD の lib/ を消して develop.sh を元のものに戻すだけ。
+# 一時的にパッチなしで起動するには、カード直下に novopatch という名前の
+# ファイルを置く。
 #
 # 実機のライブラリは /usr/lib/eyesee-mpp/ にある。ここを find で探すのは
 # やってはいけない: アプリを起動する前に数十秒かかり、その間ゴーグルは起動
@@ -127,7 +129,12 @@ fi
 echo "--- boot ---" >> "$REPORT"
 echo "inherited LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-(none)}" >> "$REPORT"
 
-if patch_vo; then
+# カード直下に novopatch があればパッチを当てない。新しいプレーヤ
+# (src/player/avplay.c) は出力に増え続ける擬似 pts を渡すので、この上限に
+# かからないはず。それをパッチなしで確かめるための切り替え。
+if [ -e /mnt/extsd/novopatch ]; then
+	echo "novopatch があるのでパッチなしで起動" >> "$REPORT"
+elif patch_vo; then
 	# 置き換えではなく前に足す。eyesee-mpp の他のライブラリも同じ変数で
 	# 解決されているなら、丸ごと差し替えるとアプリが起動しなくなる。
 	LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

@@ -57,6 +57,17 @@
 #define ASEND_stopWAIT_MS 500
 #define ASEND_procEVERY_US 20000
 
+// How far short of a play_from() position the reader seeks. A transport
+// stream seek lands roughly, sometimes after the point asked for; landing
+// short and reading forward to it costs some reading, landing past it would
+// start the sound late.
+#define ASEND_seekSHORT_MS 500
+
+// What counts as a frame from the position asked for, rather than one decoded
+// before the jump.
+#define ASEND_freshBEFORE_MS 100
+#define ASEND_freshAFTER_MS 1000
+
 // Frames handed to the output and not yet back: to time the ring, and to give
 // back to the decoder whatever the output never returns.
 #define ASEND_SLOTS 64
@@ -76,6 +87,16 @@ struct ASend {
     bool aacRaw;
     int rate, channels;
 
+    // Bare AAC frames (mp4) given ADTS headers here, from the AAC
+    // configuration in the container, so that the decoder takes them the way
+    // it takes a transport stream's. Having it add its own headers
+    // (attachAACHeader) played until the first resume and then went silent:
+    // after AW_MPI_ADEC_Seek() it gave 16 more frames and no more.
+    bool adtsWrap;
+    int adtsProfile, adtsFreq, adtsChan;
+    uint8_t *wrapBuf;
+    size_t wrapCap;
+
     ADEC_CHN adecChn;
     AUDIO_DEV aoDev;
     AO_CHN aoChn;
@@ -84,11 +105,36 @@ struct ASend {
     bool threadRunning;
     volatile bool stop;
 
+    // Playing or idle. The thread only touches the decoder and the output
+    // while playing, and asend_pause() waits for it to be idle before
+    // anything else does.
+    pthread_cond_t cond;
+    bool playing;
+    bool idle;
+    bool started; // the decoder and the output have been started once
+    int plays;
+
+    // From an asend_play_from() until the first frame from there: frames
+    // decoded before it are let go unplayed, and the clock waits for one from
+    // there to start.
+    int targetMs;
+    bool fresh;
+    bool clockArmed;
+    int staleDropped;
+
+    // The end of the last frame handed to the output, to catch one that does
+    // not follow on from it: sound heard twice, or skipped.
+    int64_t sentEndUs;
+    int jumps;
+    int64_t lastFrameUs; // when the decoder last gave a frame, this play
+    bool stallLogged;
+    int64_t eofUs;       // when the reader ran out, this play
+
     // Written by the feeding thread and the output's callback.
     pthread_mutex_t lock;
     int packetsIn, framesOut, framesSent, framesBack, sendErrs;
     ERRORTYPE lastSendErr;
-    int64_t firstBackUs;   // monotonic, when the output took the first frame
+    int64_t firstBackUs;   // monotonic, when the output took the first frame since play
     int64_t firstPtsUs;    // that frame's pts
     int64_t backEndPtsUs;  // the end of the last frame handed back
     int64_t samplesBack;   // samples handed back, all told
@@ -249,6 +295,11 @@ static bool asend_procRead(ASend_t *as, int64_t now) {
     return true;
 }
 
+static bool asend_isFresh(const ASend_t *as, int64_t tsUs) {
+    const int ms = (int)(tsUs / 1000);
+    return ms >= as->targetMs - ASEND_freshBEFORE_MS && ms <= as->targetMs + ASEND_freshAFTER_MS;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // The output hands frames back here.
 
@@ -270,7 +321,8 @@ static ERRORTYPE asend_callback(void *cookie, MPP_CHN_S *chn, MPP_EVENT_TYPE eve
     AW_MPI_ADEC_ReleaseFrame(as->adecChn, &frame);
 
     pthread_mutex_lock(&as->lock);
-    if (as->framesBack == 0) {
+    if (as->clockArmed && asend_isFresh(as, (int64_t)frame.mTimeStamp)) {
+        as->clockArmed = false;
         as->firstBackUs = now;
         as->firstPtsUs = (int64_t)frame.mTimeStamp;
     }
@@ -327,6 +379,18 @@ static int asend_adtsHeader(const uint8_t *p, int len) {
     return (p[1] & 1) ? 7 : 9;
 }
 
+static void asend_adtsBuild(const ASend_t *as, uint8_t *h, size_t payload) {
+    const size_t len = payload + 7;
+
+    h[0] = 0xff;
+    h[1] = 0xf1; // MPEG-4, no CRC
+    h[2] = (uint8_t)((as->adtsProfile << 6) | (as->adtsFreq << 2) | (as->adtsChan >> 2));
+    h[3] = (uint8_t)(((as->adtsChan & 3) << 6) | ((len >> 11) & 3));
+    h[4] = (uint8_t)((len >> 3) & 0xff);
+    h[5] = (uint8_t)(((len & 7) << 5) | 0x1f);
+    h[6] = 0xfc;
+}
+
 static void asend_feedOne(ASend_t *as) {
     if (!as->pktPending) {
         if (as->eof) {
@@ -335,6 +399,7 @@ static void asend_feedOne(ASend_t *as) {
         }
         if (!asend_readPacket(as)) {
             as->eof = true;
+            as->eofUs = asend_nowUs();
             AW_MPI_ADEC_SetStreamEof(as->adecChn, TRUE);
             LOGI("VS audio end of file after %d packets", as->packetsIn);
             return;
@@ -346,9 +411,29 @@ static void asend_feedOne(ASend_t *as) {
     const int64_t pts = as->pkt->pts != AV_NOPTS_VALUE ? as->pkt->pts : as->pkt->dts;
     const int skip = as->aacRaw ? asend_adtsHeader(as->pkt->data, as->pkt->size) : 0;
 
+    uint8_t *data = as->pkt->data + skip;
+    size_t len = (size_t)(as->pkt->size - skip);
+
+    if (as->adtsWrap) {
+        if (len + 7 > as->wrapCap) {
+            uint8_t *grown = realloc(as->wrapBuf, len + 7);
+            if (!grown) {
+                av_packet_unref(as->pkt);
+                as->pktPending = false;
+                return;
+            }
+            as->wrapBuf = grown;
+            as->wrapCap = len + 7;
+        }
+        asend_adtsBuild(as, as->wrapBuf, len);
+        memcpy(as->wrapBuf + 7, data, len);
+        data = as->wrapBuf;
+        len += 7;
+    }
+
     memset(&stream, 0, sizeof(stream));
-    stream.pStream = as->pkt->data + skip;
-    stream.mLen = (unsigned int)(as->pkt->size - skip);
+    stream.pStream = data;
+    stream.mLen = (unsigned int)len;
     stream.mTimeStamp = pts == AV_NOPTS_VALUE
                             ? 0
                             : (unsigned long long)av_rescale_q(
@@ -371,11 +456,42 @@ static void *asend_thread(void *arg) {
     AUDIO_FRAME_S frame;
     int64_t prevTs = -1;
 
-    while (!as->stop) {
+    for (;;) {
+        pthread_mutex_lock(&as->lock);
+        while (!as->playing && !as->stop) {
+            as->idle = true;
+            pthread_cond_broadcast(&as->cond);
+            pthread_cond_wait(&as->cond, &as->lock);
+        }
+        as->idle = as->stop;
+        pthread_cond_broadcast(&as->cond);
+        pthread_mutex_unlock(&as->lock);
+        if (as->stop) {
+            break;
+        }
+
         memset(&frame, 0, sizeof(frame));
         if (AW_MPI_ADEC_GetFrame(as->adecChn, &frame, 0) != SUCCESS) {
+            const int64_t now = asend_nowUs();
+            if (!as->eof && !as->stallLogged && as->lastFrameUs && now - as->lastFrameUs > 500000) {
+                as->stallLogged = true;
+                LOGW("VS audio: the decoder has given nothing for %dms (%d packets in)",
+                     (int)((now - as->lastFrameUs) / 1000), as->packetsIn);
+            }
             asend_feedOne(as);
             continue;
+        }
+        as->lastFrameUs = asend_nowUs();
+
+        // AW_MPI_ADEC_Seek() leaves what was already decoded to come out,
+        // the way the video decoder does (see framestep.c).
+        if (as->fresh) {
+            if (!asend_isFresh(as, (int64_t)frame.mTimeStamp)) {
+                AW_MPI_ADEC_ReleaseFrame(as->adecChn, &frame);
+                as->staleDropped++;
+                continue;
+            }
+            as->fresh = false;
         }
 
         if (as->described < 3) {
@@ -386,6 +502,20 @@ static void *asend_thread(void *arg) {
                  frame.mSamplerate, frame.mBitwidth, frame.mSoundmode, frame.mId, frame.mpAddr);
             prevTs = (int64_t)frame.mTimeStamp;
             as->described++;
+        }
+
+        {
+            const int64_t ts = (int64_t)frame.mTimeStamp;
+            const int64_t dur = (int64_t)asend_frameSamples(&frame) * 1000000 / as->rate;
+
+            if (as->sentEndUs && (ts < as->sentEndUs - 5000 || ts > as->sentEndUs + 30000)) {
+                as->jumps++;
+                if (as->jumps <= 20) {
+                    LOGW("VS audio frame at %lldus does not follow %lldus (%+lldms)", (long long)ts,
+                         (long long)as->sentEndUs, (long long)((ts - as->sentEndUs) / 1000));
+                }
+            }
+            as->sentEndUs = ts + dur;
         }
 
         const int64_t t = asend_nowUs();
@@ -416,6 +546,10 @@ static void *asend_thread(void *arg) {
         }
     }
 
+    pthread_mutex_lock(&as->lock);
+    as->idle = true;
+    pthread_cond_broadcast(&as->cond);
+    pthread_mutex_unlock(&as->lock);
     return NULL;
 }
 
@@ -445,12 +579,6 @@ static bool asend_openReader(ASend_t *as, const char *path) {
         return false;
     }
 
-    if (as->startMs > 0) {
-        const int64_t ts = av_rescale_q(as->startMs, (AVRational){1, 1000},
-                                        as->fmt->streams[as->stream]->time_base);
-        av_seek_frame(as->fmt, as->stream, ts, AVSEEK_FLAG_BACKWARD);
-    }
-
     as->pkt = av_packet_alloc();
     if (!as->pkt) {
         return false;
@@ -463,12 +591,15 @@ static bool asend_openReader(ASend_t *as, const char *path) {
     const AVCodecParameters *par = as->fmt->streams[as->stream]->codecpar;
     const char *from = "the container";
 
+    bool adts = false;
+
     as->rate = par->sample_rate;
     as->channels = par->channels;
     if (asend_readPacket(as)) {
         const uint8_t *h = as->pkt->data;
         as->pktPending = true;
         if (asend_adtsHeader(h, as->pkt->size)) {
+            adts = true;
             const int rateIndex = (h[2] >> 2) & 0xf;
             const int channels = ((h[2] & 1) << 2) | (h[3] >> 6);
             if (rateIndex < (int)(sizeof(rates) / sizeof(rates[0])) && channels > 0) {
@@ -477,6 +608,31 @@ static bool asend_openReader(ASend_t *as, const char *path) {
                 from = "adts";
             }
         }
+    }
+    // mp4 keeps bare frames and the configuration in the container
+    // (AudioSpecificConfig: object type, rate index, channels), which is all
+    // an ADTS header needs.
+    if (!adts && !as->aacRaw && par->extradata_size >= 2) {
+        const uint8_t *asc = par->extradata;
+        const int object = asc[0] >> 3;
+        const int freq = ((asc[0] & 7) << 1) | (asc[1] >> 7);
+        const int chan = (asc[1] >> 3) & 0xf;
+
+        if (object >= 1 && object <= 4 && freq < (int)(sizeof(rates) / sizeof(rates[0])) && chan > 0) {
+            as->adtsWrap = true;
+            as->adtsProfile = object - 1;
+            as->adtsFreq = freq;
+            as->adtsChan = chan;
+            as->rate = rates[freq];
+            as->channels = chan;
+            from = "the AAC configuration";
+            LOGI("VS audio: bare AAC frames, given ADTS headers here (object %d)", object);
+        }
+    }
+    // Nothing to build a header from: have the decoder add its own.
+    if (!adts && !as->adtsWrap && !as->aacRaw) {
+        as->aacRaw = true;
+        LOGI("VS audio: bare AAC frames, the decoder adds the headers");
     }
     if (as->rate <= 0 || as->channels <= 0) {
         // What the recorder writes.
@@ -487,6 +643,32 @@ static bool asend_openReader(ASend_t *as, const char *path) {
     LOGI("VS audio stream %d, %dHz %dch from %s", as->stream, as->rate, as->channels, from);
 
     return true;
+}
+
+// The decoder will not be destroyed until it has every frame back: it waits
+// for ever ("Wait ADec idleOutFrameList [8]nodes to home[64]", the first
+// run's hang), and the frames it decoded ahead that were never taken are not
+// back until taken and released. The output's must be back already.
+static void asend_closeAdec(ASend_t *as) {
+    AUDIO_FRAME_S frame;
+    int drained = 0;
+
+    if (as->adecChn == MM_INVALID_CHN) {
+        return;
+    }
+
+    AW_MPI_ADEC_StopRecvStream(as->adecChn);
+    while (drained < 256) {
+        memset(&frame, 0, sizeof(frame));
+        if (AW_MPI_ADEC_GetFrame(as->adecChn, &frame, 0) != SUCCESS) {
+            break;
+        }
+        AW_MPI_ADEC_ReleaseFrame(as->adecChn, &frame);
+        drained++;
+    }
+    AW_MPI_ADEC_DestroyChn(as->adecChn);
+    as->adecChn = MM_INVALID_CHN;
+    LOGI("VS audio decoder destroyed, %d decoded frames drained first", drained);
 }
 
 static bool asend_openAdec(ASend_t *as) {
@@ -515,10 +697,9 @@ static bool asend_openAdec(ASend_t *as) {
         return false;
     }
 
-    ret = AW_MPI_ADEC_StartRecvStream(as->adecChn);
-    LOGI("VS audio adec %d, %dHz %dch, %s, start %x", as->adecChn, as->rate, as->channels,
-         as->aacRaw ? "bare frames" : "adts", ret);
-    return ret == SUCCESS;
+    LOGI("VS audio adec %d, %dHz %dch, %s", as->adecChn, as->rate, as->channels,
+         as->aacRaw ? "bare frames" : "adts");
+    return true;
 }
 
 // The way adec2ao_createAOChn() sets it up for the player, less the binding.
@@ -556,12 +737,21 @@ static bool asend_openAo(ASend_t *as) {
     MPPCallbackInfo cb = {.cookie = as, .callback = (MPPCallbackFuncType)&asend_callback};
     AW_MPI_AO_RegisterCallback(as->aoDev, as->aoChn, &cb);
 
-    ret = AW_MPI_AO_StartChn(as->aoDev, as->aoChn);
-    LOGI("VS audio ao dev %d chn %d, start %x", as->aoDev, as->aoChn, ret);
-    return ret == SUCCESS;
+    LOGI("VS audio ao dev %d chn %d", as->aoDev, as->aoChn);
+    return true;
 }
 
 ASend_t *asend_open(const char *path, int start_ms, bool aac_raw) {
+    ASend_t *as = asend_open_paused(path, aac_raw);
+
+    if (as && !asend_play_from(as, start_ms)) {
+        asend_close(as);
+        return NULL;
+    }
+    return as;
+}
+
+ASend_t *asend_open_paused(const char *path, bool aac_raw) {
     const int64_t t0 = asend_nowUs();
     ASend_t *as = calloc(1, sizeof(*as));
 
@@ -569,11 +759,11 @@ ASend_t *asend_open(const char *path, int start_ms, bool aac_raw) {
         return NULL;
     }
     pthread_mutex_init(&as->lock, NULL);
+    pthread_cond_init(&as->cond, NULL);
     as->stream = -1;
     as->adecChn = MM_INVALID_CHN;
     as->aoDev = MM_INVALID_DEV;
     as->aoChn = MM_INVALID_CHN;
-    as->startMs = start_ms;
     as->aacRaw = aac_raw;
 
     if (!asend_openReader(as, path) || !asend_openAdec(as) || !asend_openAo(as)) {
@@ -597,7 +787,10 @@ void asend_close(ASend_t *as) {
     }
 
     if (as->threadRunning) {
+        pthread_mutex_lock(&as->lock);
         as->stop = true;
+        pthread_cond_broadcast(&as->cond);
+        pthread_mutex_unlock(&as->lock);
         pthread_join(as->thread, NULL);
     }
 
@@ -619,47 +812,15 @@ void asend_close(ASend_t *as) {
              (int)((asend_nowUs() - t0) / 1000));
         AW_MPI_AO_DisableChn(as->aoDev, as->aoChn);
 
-        // Stopping the output does not give back the frame its thread is
-        // writing nor the one queued behind it, and the decoder will not be
-        // destroyed until it has every frame back: it waits for ever ("Wait
-        // ADec idleOutFrameList [8]nodes to home[64]", the first run's hang).
-        // With the output gone, whatever it still had goes back from here.
-        int given = 0;
-        pthread_mutex_lock(&as->lock);
-        for (int i = 0; i < ASEND_SLOTS; i++) {
-            if (as->sentAt[i].out) {
-                AW_MPI_ADEC_ReleaseFrame(as->adecChn, &as->sentAt[i].frame);
-                as->sentAt[i].out = false;
-                given++;
-            }
-        }
-        pthread_mutex_unlock(&as->lock);
-        if (given) {
-            LOGI("VS audio gave %d frames back for the output", given);
-        }
+        // Disabling the channel hands back what the output still held,
+        // through the callback ("release all frames to ADec" in its log).
+        // Handing them back from here as well was a double release ("adec
+        // frameId ... is not find in UsedOutFrameList").
     }
     if (as->aoDev != MM_INVALID_DEV) {
         AW_MPI_AO_Disable(as->aoDev);
     }
-    if (as->adecChn != MM_INVALID_CHN) {
-        AW_MPI_ADEC_StopRecvStream(as->adecChn);
-
-        // The same for the frames it decoded ahead that were never taken:
-        // they are not idle until taken and released.
-        AUDIO_FRAME_S frame;
-        int drained = 0;
-        while (drained < 256) {
-            memset(&frame, 0, sizeof(frame));
-            if (AW_MPI_ADEC_GetFrame(as->adecChn, &frame, 0) != SUCCESS) {
-                break;
-            }
-            AW_MPI_ADEC_ReleaseFrame(as->adecChn, &frame);
-            drained++;
-        }
-        LOGI("VS audio drained %d decoded frames before destroying the decoder", drained);
-        AW_MPI_ADEC_DestroyChn(as->adecChn);
-        LOGI("VS audio decoder destroyed");
-    }
+    asend_closeAdec(as);
 
     pthread_mutex_lock(&as->lock);
     LOGI("VS audio summary packets=%d decoded=%d sent=%d back=%d send_errs=%d (last %x) "
@@ -673,11 +834,161 @@ void asend_close(ASend_t *as) {
     if (as->pkt) {
         av_packet_free(&as->pkt);
     }
+    free(as->wrapBuf);
     if (as->fmt) {
         avformat_close_input(&as->fmt);
     }
+    pthread_cond_destroy(&as->cond);
     pthread_mutex_destroy(&as->lock);
     free(as);
+}
+
+// ALSA's state in one line, around the pauses and restarts, to see what the
+// output's pause and seek do to what is already queued there.
+static void asend_procLog(ASend_t *as, const char *when) {
+    if (asend_procRead(as, asend_nowUs())) {
+        LOGI("VS audio alsa %s: %s hw=%lld appl=%lld delay=%lld", when, as->procState,
+             (long long)as->procHwPtr, (long long)as->procApplPtr, (long long)as->procDelay);
+    }
+}
+
+void asend_pause(ASend_t *as) {
+    if (!as) {
+        return;
+    }
+
+    pthread_mutex_lock(&as->lock);
+    const bool was = as->playing;
+    as->playing = false;
+    pthread_cond_broadcast(&as->cond);
+    while (!as->idle) {
+        pthread_cond_wait(&as->cond, &as->lock);
+    }
+    pthread_mutex_unlock(&as->lock);
+
+    if (!was) {
+        return;
+    }
+
+    const int64_t t0 = asend_nowUs();
+    const ERRORTYPE adec = AW_MPI_ADEC_Pause(as->adecChn);
+    const ERRORTYPE ao = AW_MPI_AO_PauseChn(as->aoDev, as->aoChn);
+    LOGI("VS audio pause: adec %x, ao %x, %dms", adec, ao, (int)((asend_nowUs() - t0) / 1000));
+    asend_procLog(as, "paused");
+}
+
+bool asend_play_from(ASend_t *as, int ms) {
+    if (!as) {
+        return false;
+    }
+
+    asend_pause(as);
+
+    const int64_t t0 = asend_nowUs();
+    const int aim = ms > ASEND_seekSHORT_MS ? ms - ASEND_seekSHORT_MS : 0;
+    ERRORTYPE seekA = SUCCESS, seekO = SUCCESS;
+    int drained = 0, stillOut = 0;
+
+    // The reader, on the first packet at or after the position.
+    if (as->pktPending) {
+        av_packet_unref(as->pkt);
+        as->pktPending = false;
+    }
+    as->eof = false;
+    as->eofUs = 0;
+    as->startMs = ms;
+    av_seek_frame(as->fmt, as->stream,
+                  av_rescale_q(aim, (AVRational){1, 1000}, as->fmt->streams[as->stream]->time_base),
+                  AVSEEK_FLAG_BACKWARD);
+
+    // A fresh decoder for every play. AW_MPI_ADEC_Seek() left it in a state
+    // that played on for a while and then went wrong: after the second or
+    // third resume of an mp4 it took packets and gave no frames (sound gone),
+    // and the user heard the sound doubled with a delay after another. Every
+    // first play from a new decoder was right, in every run, so every play is
+    // a first play.
+    //
+    // The output is flushed first (the order MPP's own player uses: pause,
+    // seek, start), and its seek hands back what it held, through the
+    // callback, which is what destroying the decoder waits for. Should any be
+    // left out, destroying would hang, so the decoder is then kept and
+    // flushed instead.
+    bool renewed = false;
+    if (as->started) {
+        AW_MPI_AO_SetStreamEof(as->aoDev, as->aoChn, FALSE, FALSE);
+        seekO = AW_MPI_AO_Seek(as->aoDev, as->aoChn);
+
+        const int64_t t1 = asend_nowUs();
+        int out;
+        for (;;) {
+            pthread_mutex_lock(&as->lock);
+            out = as->framesSent - as->framesBack;
+            pthread_mutex_unlock(&as->lock);
+            if (out <= 0 || asend_nowUs() - t1 > 200000) {
+                break;
+            }
+            usleep(2000);
+        }
+
+        if (out <= 0) {
+            asend_closeAdec(as);
+            renewed = asend_openAdec(as);
+            if (!renewed) {
+                LOGE("VS audio: no decoder to play with");
+                return false;
+            }
+        } else {
+            LOGW("VS audio: %d frames still with the output, flushing the decoder instead", out);
+            AW_MPI_ADEC_SetStreamEof(as->adecChn, FALSE);
+            seekA = AW_MPI_ADEC_Seek(as->adecChn);
+
+            AUDIO_FRAME_S frame;
+            while (drained < 256) {
+                memset(&frame, 0, sizeof(frame));
+                if (AW_MPI_ADEC_GetFrame(as->adecChn, &frame, 0) != SUCCESS) {
+                    break;
+                }
+                AW_MPI_ADEC_ReleaseFrame(as->adecChn, &frame);
+                drained++;
+            }
+        }
+    }
+
+    pthread_mutex_lock(&as->lock);
+    // After the output's seek it holds nothing, whatever the slots say. Left
+    // alone, slots its seek emptied without a callback piled up, 6 more on
+    // every resume.
+    for (int i = 0; i < ASEND_SLOTS; i++) {
+        stillOut += as->sentAt[i].out ? 1 : 0;
+        as->sentAt[i].out = false;
+    }
+    as->firstBackUs = 0;
+    as->firstPtsUs = 0;
+    as->sentEndUs = 0;
+    as->lastFrameUs = asend_nowUs();
+    as->stallLogged = false;
+    as->clockArmed = true;
+    as->targetMs = ms;
+    as->fresh = true;
+    pthread_mutex_unlock(&as->lock);
+
+    const ERRORTYPE startO = AW_MPI_AO_StartChn(as->aoDev, as->aoChn);
+    const ERRORTYPE startA = AW_MPI_ADEC_StartRecvStream(as->adecChn);
+    as->started = true;
+    as->plays++;
+
+    LOGI("VS audio play %d from %dms: %s, seek ao %x adec %x, drained %d, %d slots out, "
+         "start ao %x adec %x, %dms",
+         as->plays, ms, renewed ? "new decoder" : "same decoder", seekO, seekA, drained, stillOut,
+         startO, startA, (int)((asend_nowUs() - t0) / 1000));
+    asend_procLog(as, "restarted");
+
+    pthread_mutex_lock(&as->lock);
+    as->playing = true;
+    pthread_cond_broadcast(&as->cond);
+    pthread_mutex_unlock(&as->lock);
+
+    return true;
 }
 
 bool asend_audible(ASend_t *as, int method, int64_t now_us, int64_t *pts_us) {
@@ -708,10 +1019,27 @@ bool asend_audible(ASend_t *as, int method, int64_t now_us, int64_t *pts_us) {
         return false;
     }
 
-    // hw_ptr counts from the prepare the output did when it opened ALSA, so
-    // its first sample is the first frame's.
-    *pts_us = firstPts + as->procHwPtr * 1000000 / as->rate + (now_us - as->procReadUs);
+    // What has been handed back, less what ALSA still has queued. The output's
+    // own ring between the two was measured at next to nothing (what was
+    // handed back ran ahead of the clock by what ALSA said it held, to 10ms),
+    // and unlike hw_ptr this needs no origin, so it holds across restarts.
+    pthread_mutex_lock(&as->lock);
+    const int64_t backEnd = as->backEndPtsUs;
+    pthread_mutex_unlock(&as->lock);
+    *pts_us = backEnd - as->procDelay * 1000000 / as->rate + (now_us - as->procReadUs);
     return true;
+}
+
+bool asend_exhausted(ASend_t *as) {
+    bool exhausted;
+
+    if (!as) {
+        return true;
+    }
+    pthread_mutex_lock(&as->lock);
+    exhausted = as->clockArmed && as->eofUs && asend_nowUs() - as->eofUs > 200000;
+    pthread_mutex_unlock(&as->lock);
+    return exhausted;
 }
 
 void asend_log(ASend_t *as, int64_t now_us) {

@@ -35,6 +35,7 @@
 //   lineout dac|off      route played sound to the line out, or put the
 //                        routing back the way the menu leaves it
 //   mixer                every ALSA mixer control and its value, one line each
+//   shell <command>      run it and put what it prints in the log
 //   exit                 leave the player
 //   halt                 stop the script here
 //
@@ -54,13 +55,12 @@
 
 #include "core/app_state.h"
 #include "core/common.hh"
+#include "core/dvr.h"
 #include "driver/beep.h"
 #include "player/asend.h"
 #include "player/vosend.h"
-#include "ui/page_common.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_player.h"
-#include "util/system.h"
 
 #define AUTOTEST_FILE "/mnt/extsd/autotest.txt"
 #define AUTOTEST_RAN "/mnt/extsd/autotest.ran.txt"
@@ -241,39 +241,16 @@ static void at_avsend(const char *line) {
     at_sleep_ms(300);
 }
 
-// Played sound reaches no jack otherwise, in this fork and in the stock app
-// alike: the menu turns the line out off (dvr_enable_line_out(false)), and
-// the only time it is turned on, for an analog source, the DAC is taken out
-// of the output mixer ("out_dac_off") so that just the line in goes through.
-// Measured: ALSA running and hw_ptr advancing through a whole run, and
-// nothing in the headphones, MPP's own player included.
-//
-// The right channel needs one more switch that audio_sel.sh has commented
-// out: 'DACR Mixer AIF1DA0R Switch' is off from boot, where its left twin is
-// on, so the right DAC had nothing to play (the mixer dump of the first run
-// that was heard, which was heard quietly and, it turns out, left only).
-//
-// "off" leaves it as the menu does. dvr_enable_line_out() only touches the
-// mixer on a change it knows of and it last knew "off", so the next analog
-// source sets everything, the line in included, from scratch.
-#define AT_DACR_SWITCH "amixer -q cset name='DACR Mixer AIF1DA0R Switch' "
-
+// The player's own routing (dvr_playback_audio()), for a test that plays
+// without the player's screen.
 static void at_lineout(const char *how) {
-    static const char *const dac[] = {"out_on", "out_linein_off", "out_dac_on"};
-    static const char *const off[] = {"out_dac_off", "out_linein_on", "out_off"};
-    const bool on = strcmp(how, "dac") == 0;
-    const char *const *steps = on ? dac : off;
-    char cmd[128];
-
-    if (!on && strcmp(how, "off") != 0) {
+    if (strcmp(how, "dac") == 0) {
+        dvr_playback_audio(true);
+    } else if (strcmp(how, "off") == 0) {
+        dvr_playback_audio(false);
+    } else {
         LOGW("AT lineout: dac or off, not '%s'", how);
-        return;
     }
-    for (int i = 0; i < 3; i++) {
-        snprintf(cmd, sizeof(cmd), "%s %s", AUDIO_SEL_SH, steps[i]);
-        system_exec(cmd);
-    }
-    system_exec(on ? AT_DACR_SWITCH "1" : AT_DACR_SWITCH "0");
 }
 
 // amixer prints three lines a control (numid and name, type, values); they
@@ -300,6 +277,28 @@ static void at_mixer(void) {
         }
     }
     LOGI("AT mixer done, %d controls, amixer exit %d", count, pclose(fp));
+}
+
+static void at_shell(const char *line) {
+    const char *cmd = line + strlen("shell");
+    char buf[512], out[256];
+    int count = 0;
+
+    while (*cmd == ' ' || *cmd == '\t') {
+        cmd++;
+    }
+    snprintf(buf, sizeof(buf), "%s 2>&1", cmd);
+    FILE *fp = popen(buf, "r");
+    if (!fp) {
+        LOGW("AT shell: cannot run '%s'", cmd);
+        return;
+    }
+    while (fgets(out, sizeof(out), fp) && count < 200) {
+        out[strcspn(out, "\r\n")] = 0;
+        LOGI("AT shell | %s", out);
+        count++;
+    }
+    LOGI("AT shell done, %d lines, exit %d", count, pclose(fp));
 }
 
 static void at_wait_resume(int timeout_ms) {
@@ -423,6 +422,8 @@ static bool at_run(int i, char *line) {
         at_lineout(a1);
     } else if (strcmp(op, "mixer") == 0) {
         at_mixer();
+    } else if (strcmp(op, "shell") == 0) {
+        at_shell(line);
     } else if (strcmp(op, "echo") == 0) {
         // already logged by at_log_cmd
     } else if (strcmp(op, "halt") == 0) {

@@ -1,0 +1,29 @@
+# mp4 (H.264 + ADTS の無い AAC) の音: 止めてコマ送りして再開、を 3 回。毎回音が戻るか。
+# 最後に TS でも 1 回、変わりがないか。
+size frame
+stepgap 400
+
+echo mp4
+open hdz_9003.mp4
+wait 3000
+loop 3
+  pause
+  wait 500
+  step +1
+  play
+  waitresume 5000
+  wait 2500
+end
+exit
+wait 1500
+
+echo ts
+open hdz_9048.ts
+wait 3000
+pause
+wait 500
+step -1
+play
+waitresume 5000
+wait 2500
+exit

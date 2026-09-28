@@ -263,6 +263,59 @@ void dvr_enable_line_out(bool enable) {
     }
 }
 
+// Played sound reaches no jack otherwise, in this fork and in the stock app
+// alike: the menu turns the line out off (dvr_enable_line_out(false)), and
+// the one time it is turned on, for an analog source, the DAC is taken out of
+// the output mixer ("out_dac_off") so that only the line in goes through.
+// Measured with the player: ALSA running and nothing in the headphones.
+//
+// The right channel needs one more switch, which audio_sel.sh has commented
+// out: 'DACR Mixer AIF1DA0R Switch' is off from boot while its left twin is
+// on. And MPP writes 'lineout volume' 27 every time it starts (alsaOpenMixer()
+// in libmedia_mpp.so, a constant, of a range that goes to 31), so this has to
+// come after the player has started MPP.
+//
+// "off" leaves the mixer as the menu does. dvr_enable_line_out() only touches
+// the mixer on a change it knows of and it last knew "off", so the next
+// analog source sets everything, the line in included, from scratch.
+static pthread_mutex_t playback_audio_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void dvr_playback_audio(bool on) {
+    static const char *const onSteps[] = {"out_on", "out_linein_off", "out_dac_on"};
+    static const char *const offSteps[] = {"out_dac_off", "out_linein_on", "out_off"};
+    const char *const *steps = on ? onSteps : offSteps;
+    char buf[128];
+
+    pthread_mutex_lock(&playback_audio_mutex);
+    for (int i = 0; i < 3; i++) {
+        snprintf(buf, sizeof(buf), "%s %s", AUDIO_SEL_SH, steps[i]);
+        system_exec(buf);
+    }
+    system_exec(on ? "amixer -q cset name='DACR Mixer AIF1DA0R Switch' 1"
+                   : "amixer -q cset name='DACR Mixer AIF1DA0R Switch' 0");
+    if (on) {
+        system_exec("amixer -q cset name='lineout volume' 31");
+    }
+    pthread_mutex_unlock(&playback_audio_mutex);
+}
+
+static void *playback_audio_thread(void *arg) {
+    dvr_playback_audio(arg != NULL);
+    return NULL;
+}
+
+// Four or five amixer processes, around half a second: not something to hold
+// the player's screen up for.
+void dvr_playback_audio_async(bool on) {
+    pthread_t pid;
+
+    if (pthread_create(&pid, NULL, playback_audio_thread, on ? (void *)1 : NULL) == 0) {
+        pthread_detach(pid);
+    } else {
+        dvr_playback_audio(on);
+    }
+}
+
 void dvr_select_audio_source(uint8_t source) {
     char buf[128];
     char *audio_source[3] = {

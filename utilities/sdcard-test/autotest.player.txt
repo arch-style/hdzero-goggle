@@ -1,0 +1,88 @@
+# 新しいプレーヤ（src/player/avplay.c）の一通りの確認。
+# 結果は "AT" 行: utilities/sdcard-test/autotest-report.py -v HDZGOGGLE.log
+# 見て聞くところ（イヤホンは🎧の端子に）:
+#   A 録画: 音つきで再生、止める・コマ送り・戻す・再開を繰り返しても再開は即座で音も一緒に戻るか
+#   B 録画: 再生中に 5 秒ずつ進む・戻る、1/2 速度（無音）、一時停止中のシーク
+#   C avsync.ts: フラッシュとビープが同時か。止めて再開しても同時のままか
+#   D 短い録画: 最後まで再生して止まり、もう一度再生で頭から
+#   E mp4 (H.264): 音つきで再生し、止めてコマ送り、再開
+
+# HDMI に音を出せるかの下調べ: サウンドカードと、I2S / S/PDIF がデバイスツリーにあるか
+shell cat /proc/asound/cards
+shell cat /proc/asound/pcm
+shell ls /dev/snd
+shell find /proc/device-tree -maxdepth 3 -iname '*i2s*' -o -maxdepth 3 -iname '*daudio*' -o -maxdepth 3 -iname '*spdif*' -o -maxdepth 3 -iname '*sound*'
+
+# A
+echo A pause-step-resume
+size frame
+stepgap 400
+open hdz_9048.ts
+wait 4000
+loop 5
+  pause
+  wait 500
+  step +2
+  step -1
+  play
+  waitresume 5000
+  wait 1500
+end
+
+# B
+echo B seek-speed
+size 5s
+up 2
+wait 2500
+down 1
+wait 2500
+speed 2
+wait 3000
+speed 1
+wait 2000
+pause
+size 10s
+up 3
+wait 1500
+play
+waitresume 5000
+wait 2500
+exit
+wait 1500
+
+# C
+echo C avsync
+open /mnt/extsd/avsync.ts
+wait 5000
+loop 3
+  pause
+  wait 1000
+  play
+  waitresume 5000
+  wait 3000
+end
+exit
+wait 1500
+
+# D
+echo D end-of-file
+open hdz_0018.ts
+wait 11000
+play
+waitresume 5000
+wait 2500
+exit
+wait 1500
+
+# E
+echo E mp4
+size frame
+open hdz_9003.mp4
+wait 4000
+pause
+wait 500
+step +1
+play
+waitresume 5000
+wait 2500
+exit

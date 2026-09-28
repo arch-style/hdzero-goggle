@@ -1,0 +1,104 @@
+# 新しいプレーヤの映像の総ざらい（イヤホン不要、画面を見るだけ、約 2 分）。
+# 結果: autotest-report.py -v と、"avplay" の "played N frames ... late" 行。
+#   1 端: 先頭で戻す・最後で送る・最後で再生
+#   2 53 秒の録画を最後まで通す（遅れたコマ、終わりで止まるか）
+#   3 1/4・1/8 のスロー、再生中と一時停止中のシーク連打、コマ送り・戻し 10 連打、止める/再生の連打
+#   4 形式: H.264 の TS、640x360、59.94fps の極短ファイル、1 秒未満の壊れかけのファイル
+size frame
+stepgap 150
+
+echo 1 edges
+open hdz_0018.ts
+wait 1000
+pause
+size 30s
+down 1
+wait 600
+size frame
+step -2
+step +3
+size 30s
+up 1
+wait 600
+size frame
+step +2
+step -2
+play
+waitresume 5000
+wait 2000
+exit
+wait 1000
+
+echo 2 straight to the end
+open hdz_0012.ts
+wait 56000
+exit
+wait 1000
+
+echo 3 slow and seeks
+open hdz_9048.ts
+wait 2000
+speed 4
+wait 3000
+speed 8
+wait 3000
+speed 1
+wait 2000
+size 5s
+stepgap 100
+up 6
+wait 2000
+down 3
+wait 2000
+pause
+up 4
+wait 1000
+play
+waitresume 5000
+wait 2000
+size frame
+stepgap 50
+pause
+step +10
+step -10
+play
+waitresume 5000
+wait 1500
+loop 5
+  pause
+  play
+end
+waitresume 5000
+wait 1500
+exit
+wait 1000
+
+echo 4 formats
+stepgap 150
+open hdz_9001.ts
+wait 3000
+pause
+step +2
+step -1
+play
+waitresume 5000
+wait 2000
+exit
+wait 1000
+open hdz_9002.ts
+wait 3000
+exit
+wait 1000
+open hdz_9125.ts
+wait 1500
+exit
+wait 1000
+open hdz_9054.ts
+wait 1500
+play
+wait 1000
+exit
+wait 1000
+open hdz_0017.ts
+wait 2000
+exit

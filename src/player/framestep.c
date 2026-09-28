@@ -860,6 +860,18 @@ void framestep_close(FrameStep_t *fs) {
     if (fs->vdecChn != MM_INVALID_CHN) {
         if (fs->started) {
             AW_MPI_VDEC_StopRecvStream(fs->vdecChn);
+
+            // Frames decoded ahead and never taken are still the decoder's
+            // to account for: destroyed with them waiting, it logs "fatal
+            // error! outReadyFrame must be 0!".
+            VIDEO_FRAME_INFO_S frame;
+            for (int n = 0; n < 64; n++) {
+                memset(&frame, 0, sizeof(frame));
+                if (AW_MPI_VDEC_GetImage(fs->vdecChn, &frame, 0) != SUCCESS) {
+                    break;
+                }
+                framestep_release(fs, &frame);
+            }
         }
         AW_MPI_VDEC_DestroyChn(fs->vdecChn);
     }
@@ -1007,6 +1019,28 @@ void framestep_put_frame(FrameStep_t *fs, VIDEO_FRAME_INFO_S *frame) {
     }
 }
 
+void framestep_unget_frame(FrameStep_t *fs, VIDEO_FRAME_INFO_S *frame) {
+    if (!fs || !frame) {
+        return;
+    }
+    if (fs->hasPending) {
+        // Two frames cannot be next; the later one goes back to the pool.
+        LOGW("a frame is already next; %dms dropped", framestep_frameMs(frame));
+        framestep_release(fs, frame);
+        return;
+    }
+    fs->pending = *frame;
+    fs->hasPending = true;
+}
+
+int framestep_duration_ms(FrameStep_t *fs) {
+    if (!fs || !fs->fmt || fs->fmt->duration == AV_NOPTS_VALUE || fs->fmt->duration <= 0) {
+        return 0;
+    }
+
+    return (int)(fs->fmt->duration / (AV_TIME_BASE / 1000));
+}
+
 bool framestep_next(FrameStep_t *fs, FrameStepPic_t *pic) {
     VIDEO_FRAME_INFO_S frame;
 
@@ -1033,18 +1067,10 @@ bool framestep_next(FrameStep_t *fs, FrameStepPic_t *pic) {
     return framestep_publish(fs, &frame, pic);
 }
 
-bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic) {
+// The last frame before wasMs, left out of the pool for the caller.
+static bool framestep_prevRaw(FrameStep_t *fs, int wasMs, VIDEO_FRAME_INFO_S *out) {
     VIDEO_FRAME_INFO_S frame;
     VIDEO_FRAME_INFO_S candidate;
-
-    if (!fs || !pic) {
-        return false;
-    }
-    if (!fs->hasShown) {
-        return framestep_to(fs, 0, pic);
-    }
-
-    const int wasMs = fs->shownMs;
 
     // Keep the last frame before the one on screen. Going by what comes out
     // of the decoder rather than by arithmetic on the frame interval is what
@@ -1092,7 +1118,8 @@ bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic) {
         }
 
         if (haveCandidate) {
-            return framestep_publish(fs, &candidate, pic);
+            *out = candidate;
+            return true;
         }
         if (from <= 0) {
             break; // already at the start of the file
@@ -1100,12 +1127,14 @@ bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic) {
         LOGD("nothing before %dms from %dms, reaching further back", wasMs, from);
     }
 
-    // Nothing found, and the decoder has been moved. Put it back where the
-    // picture on screen is so the next step forward does not jump.
+    // Nothing found, and the decoder has been moved. Put it back just past the
+    // picture on screen, which is still up, so that the next step forward is
+    // the frame after it. (Kept at the picture itself, the first step forward
+    // after a step back at the start showed the same frame again.)
     LOGD("no frame before %dms", wasMs);
     if (framestep_seekBefore(fs, wasMs)) {
         while (framestep_decodeOne(fs, &frame)) {
-            if (framestep_frameMs(&frame) >= wasMs) {
+            if (framestep_frameMs(&frame) > wasMs) {
                 fs->pending = frame;
                 fs->hasPending = true;
                 break;
@@ -1115,4 +1144,28 @@ bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic) {
     }
 
     return false;
+}
+
+bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic) {
+    VIDEO_FRAME_INFO_S frame;
+
+    if (!fs || !pic) {
+        return false;
+    }
+    if (!fs->hasShown) {
+        return framestep_to(fs, 0, pic);
+    }
+    if (!framestep_prevRaw(fs, fs->shownMs, &frame)) {
+        return false;
+    }
+
+    return framestep_publish(fs, &frame, pic);
+}
+
+bool framestep_get_prev_frame(FrameStep_t *fs, int before_ms, VIDEO_FRAME_INFO_S *frame) {
+    if (!fs || !frame) {
+        return false;
+    }
+
+    return framestep_prevRaw(fs, before_ms, frame);
 }

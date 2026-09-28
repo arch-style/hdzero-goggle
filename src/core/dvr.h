@@ -27,6 +27,10 @@ const char *dvr_auto_halt_reason(void);
 void dvr_card_removed(void);
 void dvr_select_audio_source(uint8_t audio_source);
 void dvr_enable_line_out(bool enable);
+// Played sound to the line out (the headphone jack), or back the way the
+// menu leaves it. Waits for the mixer; the _async form does not.
+void dvr_playback_audio(bool on);
+void dvr_playback_audio_async(bool on);
 void dvr_cmd(osd_dvr_cmd_t cmd);
 // Finish a stop that was left running in the background. Call before taking
 // the video away from under the record process.

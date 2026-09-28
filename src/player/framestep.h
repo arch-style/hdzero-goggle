@@ -89,6 +89,15 @@ bool framestep_get_frame(FrameStep_t *fs, struct VIDEO_FRAME_INFO_S *frame);
 // The first frame at or after this position.
 bool framestep_get_frame_at(FrameStep_t *fs, int ms, struct VIDEO_FRAME_INFO_S *frame);
 void framestep_put_frame(FrameStep_t *fs, struct VIDEO_FRAME_INFO_S *frame);
+// The last frame before this position, which is the one on screen: a step
+// back. The frame on screen itself is kept, to come out next.
+bool framestep_get_prev_frame(FrameStep_t *fs, int before_ms, struct VIDEO_FRAME_INFO_S *frame);
+// Hands a frame taken with framestep_get_frame() back, unshown, to be the
+// next one out.
+void framestep_unget_frame(FrameStep_t *fs, struct VIDEO_FRAME_INFO_S *frame);
+
+// The file's length, or 0 when the container does not say.
+int framestep_duration_ms(FrameStep_t *fs);
 
 #ifdef __cplusplus
 }

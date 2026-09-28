@@ -9,7 +9,7 @@ extern "C" {
 
 #include <lvgl/lvgl.h>
 
-#include "player/media.h"
+
 
 #define LV_COLOR_MAKE_32(a, r, g, b) \
     _LV_COLOR_MAKE_TYPE_HELPER {     \
