@@ -1,29 +1,24 @@
-#include "media.h"
+#include "player/avplay.h"
+#include "player/vosend.h"
 
-#include "adec2ao.h"
-#include "awdmx.h"
-#include "vdec2vo.h"
+// The player decodes on the goggle's hardware; the emulator plays nothing,
+// and the player's screen says so.
+AvPlay_t *avplay_open(const char *path) { return NULL; }
+void avplay_close(AvPlay_t *ap) {}
+int avplay_duration_ms(AvPlay_t *ap) { return 0; }
+int avplay_frame_ms(AvPlay_t *ap) { return 16; }
+int avplay_position_ms(AvPlay_t *ap) { return 0; }
+int avplay_state(AvPlay_t *ap) { return AVPLAY_PAUSED; }
+bool avplay_has_audio(AvPlay_t *ap) { return false; }
+bool avplay_resuming(AvPlay_t *ap) { return false; }
+void avplay_play(AvPlay_t *ap, int divider) {}
+void avplay_pause(AvPlay_t *ap) {}
+bool avplay_step(AvPlay_t *ap, bool forward) { return false; }
+bool avplay_seek(AvPlay_t *ap, int ms) { return false; }
 
-typedef struct
-{
-    Vdec2VoContext_t *vv;
-    Adec2AoContext_t *aa;
-    AwdmxContext_t *dmx;
-    uint32_t state;
-    pthread_mutex_t mutex;
-    int playingTime; // ms
-} PlayContext_t;
-
-static int play_start(PlayContext_t *playCtx) { return -1; }
-static int play_pause(PlayContext_t *playCtx) { return -1; }
-static int play_stop(PlayContext_t *playCtx) { return -1; }
-static int play_seekto(PlayContext_t *playCtx, int seekTime) { return -1; }
-static void play_moveStatus(PlayContext_t *playCtx) {}
-static void play_onDemuxEof(void *context) {}
-void *thread_media(void *params) { return NULL; }
-void media_control(media_t *media, player_cmd_t *cmd) {}
-media_t *media_instantiate(char *filename, notify_cb_t notify) { return NULL; }
-void media_exit(media_t *media) {}
+const char *vosend_mode_name(int mode) { return "?"; }
+int vosend_mode_parse(const char *name) { return -1; }
+bool vosend_run(const char *path, const vosend_opts_t *opts) { return false; }
 
 #if HDZGOGGLE
 void Display_HDZ(int mode, int is_43) {}

@@ -1,0 +1,64 @@
+# プレーヤの回帰確認（イヤホン不要、約 1 分）。novopatch を置いたまま（libmpp_vo のパッチなし）で。
+#   1 端: 先頭で戻す→送る、末尾を越えるシーク（最後のコマが出るか）→送る（終端）→戻す→再生
+#   2 1 秒未満のファイル
+#   3 TS: 5 秒、止める→戻す 3→送る 3→再開、1/2 速度、10 秒シーク
+#   4 mp4 (H.264): 3 秒、止める→送る→再開
+size frame
+stepgap 150
+
+echo 1 edges
+open hdz_0018.ts
+wait 1000
+pause
+size 30s
+down 1
+wait 600
+size frame
+step -2
+step +3
+size 30s
+up 1
+wait 800
+size frame
+step +2
+step -2
+play
+waitresume 5000
+wait 1500
+exit
+wait 1000
+
+echo 2 tiny
+open hdz_9054.ts
+wait 1500
+exit
+wait 1000
+
+echo 3 ts
+open hdz_9048.ts
+wait 5000
+pause
+step -3
+step +3
+play
+waitresume 5000
+wait 2000
+speed 2
+wait 2500
+speed 1
+size 10s
+up 1
+wait 2500
+exit
+wait 1000
+
+echo 4 mp4
+size frame
+open hdz_9003.mp4
+wait 3000
+pause
+step +1
+play
+waitresume 5000
+wait 2000
+exit

@@ -113,7 +113,8 @@ static ERRORTYPE avplay_voCallback(void *cookie, MPP_CHN_S *chn, MPP_EVENT_TYPE 
     return SUCCESS;
 }
 
-// The way vdec2vo_createVoChn() set it up for MPP's player, less the binding.
+// The way MPP's player set it up (vdec2vo_createVoChn(), since removed), less
+// the binding.
 static bool avplay_openVo(AvPlay_t *ap) {
     VO_VIDEO_LAYER_ATTR_S layerAttr;
     ERRORTYPE ret = FAILURE;
@@ -432,7 +433,7 @@ AvPlay_t *avplay_open(const char *path) {
     AW_MPI_SYS_SetConf(&sysConf);
     AW_MPI_SYS_Init();
 
-    ap->fs = framestep_open_ex(path, AVPLAY_extraFRAMES);
+    ap->fs = framestep_open(path, AVPLAY_extraFRAMES);
     if (!ap->fs || !avplay_openVo(ap)) {
         avplay_close(ap);
         return NULL;
@@ -649,7 +650,13 @@ bool avplay_seek(AvPlay_t *ap, int ms) {
         // file would. Left with nothing shown, the picture stayed where it
         // was while the decoder sat at the end, and a step forward from it
         // found nothing.
-        got = framestep_get_prev_frame(ap->fs, ms + 60000, &frame) && avplay_show(ap, &frame);
+        //
+        // Looked for back from the end rather than from the position asked
+        // for: a step back starts decoding a keyframe or so before where it
+        // is asked, and from far past the end that is past it too (measured:
+        // asked from 60s past a 9s file, it found nothing).
+        const int from = (ap->durationMs > 0 && ap->durationMs < ms) ? ap->durationMs : ms;
+        got = framestep_get_prev_frame(ap->fs, from, &frame) && avplay_show(ap, &frame);
         if (got) {
             LOGI("nothing at %dms, showing the last frame, %dms", ms, avplay_position_ms(ap));
         }

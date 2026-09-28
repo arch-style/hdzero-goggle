@@ -702,7 +702,8 @@ static bool asend_openAdec(ASend_t *as) {
     return true;
 }
 
-// The way adec2ao_createAOChn() sets it up for the player, less the binding.
+// The way MPP's player set it up (adec2ao_createAOChn(), since removed), less
+// the binding.
 static bool asend_openAo(ASend_t *as) {
     AIO_ATTR_S attr;
     ERRORTYPE ret;

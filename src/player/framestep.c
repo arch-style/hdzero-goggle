@@ -26,8 +26,9 @@
 // serialises the two.
 #define FRAMESTEP_feedAHEAD 3
 
-// This runs on the UI thread with the LVGL lock held, so it is bounded by
-// wall clock rather than by packets: whatever happens, the dial comes back.
+// Steps and seeks run on the UI thread with the LVGL lock held, so a decode
+// is bounded by wall clock rather than by packets: whatever happens, the dial
+// comes back.
 #define FRAMESTEP_deadlineMS 1500
 
 struct FrameStep {
@@ -57,24 +58,11 @@ struct FrameStep {
     VDEC_CHN vdecChn;
     bool started;
 
-    // A picture is converted into pixels and given straight back: the decoder
-    // has a small pool and keeping one out of it, across a seek in particular,
-    // was what left it with nothing to decode into ("no picture within
-    // 1500ms"). The one exception is the frame read past the target while
-    // stepping back, kept so that the next step forward is that frame rather
-    // than the one after it.
+    // The frame to come out next, when it is already decoded: the one read
+    // past the target while stepping back, which is the frame after the one
+    // then on screen, or one the player took and handed back unshown.
     VIDEO_FRAME_INFO_S pending;
     bool hasPending;
-
-    uint8_t *pixels;
-    int outWidth, outHeight; // 0 = whatever the stream is
-    int bufWidth, bufHeight;
-
-    // Where each output column and row reads from. Worked out once per size
-    // rather than with a division per pixel, which on this core is a library
-    // call two million times a frame.
-    int *xMap, *cMap, *yMap;
-    int mapSrcW, mapSrcH, mapOutW, mapOutH, mapCStep, mapTop, mapLeft;
 
     // The two most recent keyframes fed to the decoder, by pts. A step back
     // has to start decoding at the keyframe before the target, and asking the
@@ -92,10 +80,6 @@ struct FrameStep {
     // the previous session's last, and a step back found "nothing before"
     // its target because the first frame out was a leftover past it.
     bool awaitingFresh;
-
-    int shownMs;
-    bool hasShown;
-    bool describedFrame;
 };
 
 #define FRAMESTEP_noKEY (-1)
@@ -152,251 +136,6 @@ static void framestep_dropPending(FrameStep_t *fs) {
         framestep_release(fs, &fs->pending);
         fs->hasPending = false;
     }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// The picture's layout, and the conversion.
-
-// The frame's own account of its layout is only partly true. Measured on the
-// goggle: a 1280x720 recording comes back as mWidth 1280, mHeight 736 (the
-// buffer, padded), offsets top 0 / bottom 720 (the picture), and strides of
-// 1280 for all three planes -- but the two chroma planes start 640*368 bytes
-// apart, so their real stride is 640. Reading them at 1280 walks off the end
-// of the last one, which shows as a moire over the picture and, when that
-// buffer is the last in the pool, as a SIGSEGV. So the picture rectangle comes
-// from the offsets and the chroma stride from where the planes actually are.
-typedef struct {
-    int srcW, srcH; // the picture, not the buffer
-    int top, left;  // where it starts in the buffer
-    int yStride, cStride;
-    int cStep, uOff, vOff;
-    const uint8_t *yPlane, *uPlane, *vPlane;
-    size_t ySpan, cSpan; // how far a read can reach into each plane
-} FrameLayout_t;
-
-static bool framestep_layout(const VIDEO_FRAME_S *vf, FrameLayout_t *lo) {
-    const bool semiPlanar = (vf->mPixelFormat == MM_PIXEL_FORMAT_YUV_SEMIPLANAR_420 ||
-                             vf->mPixelFormat == MM_PIXEL_FORMAT_YVU_SEMIPLANAR_420);
-    const bool vFirst = (vf->mPixelFormat == MM_PIXEL_FORMAT_YVU_PLANAR_420 ||
-                         vf->mPixelFormat == MM_PIXEL_FORMAT_YVU_SEMIPLANAR_420);
-
-    memset(lo, 0, sizeof(*lo));
-
-    lo->top = vf->mOffsetTop > 0 ? vf->mOffsetTop : 0;
-    lo->left = vf->mOffsetLeft > 0 ? vf->mOffsetLeft : 0;
-    lo->srcH = (vf->mOffsetBottom > lo->top) ? vf->mOffsetBottom - lo->top : (int)vf->mHeight;
-    lo->srcW = (vf->mOffsetRight > lo->left) ? vf->mOffsetRight - lo->left : (int)vf->mWidth;
-    if (lo->srcW <= 0 || lo->srcH <= 0) {
-        return false;
-    }
-
-    lo->yStride = (int)vf->mStride[0] > 0 ? (int)vf->mStride[0] : (int)vf->mWidth;
-
-    lo->yPlane = vf->mpVirAddr[0];
-    lo->uPlane = semiPlanar ? vf->mpVirAddr[1] : vf->mpVirAddr[vFirst ? 2 : 1];
-    lo->vPlane = semiPlanar ? vf->mpVirAddr[1] : vf->mpVirAddr[vFirst ? 1 : 2];
-    if (!lo->yPlane || !lo->uPlane || !lo->vPlane) {
-        return false;
-    }
-
-    const int cRows = ((int)vf->mHeight + 1) / 2;
-
-    if (semiPlanar) {
-        lo->cStride = lo->yStride;
-        lo->cStep = 2;
-        lo->uOff = vFirst ? 1 : 0;
-        lo->vOff = vFirst ? 0 : 1;
-    } else {
-        // The two planes are laid end to end, so their distance apart is one
-        // plane, and a plane is stride * rows.
-        const uint8_t *first = lo->uPlane < lo->vPlane ? lo->uPlane : lo->vPlane;
-        const uint8_t *second = lo->uPlane < lo->vPlane ? lo->vPlane : lo->uPlane;
-        const size_t apart = (size_t)(second - first);
-
-        lo->cStride = (cRows > 0 && apart > 0 && apart % (size_t)cRows == 0)
-                          ? (int)(apart / (size_t)cRows)
-                          : lo->yStride / 2;
-        lo->cStep = 1;
-    }
-
-    lo->ySpan = (size_t)lo->yStride * (size_t)vf->mHeight;
-    lo->cSpan = (size_t)lo->cStride * (size_t)cRows;
-
-    return true;
-}
-
-static bool framestep_sizeBuffer(FrameStep_t *fs, const FrameLayout_t *lo) {
-    const int w = fs->outWidth > 0 ? fs->outWidth : lo->srcW;
-    const int h = fs->outHeight > 0 ? fs->outHeight : lo->srcH;
-
-    if (fs->pixels && fs->bufWidth == w && fs->bufHeight == h) {
-        return true;
-    }
-
-    uint8_t *pixels = realloc(fs->pixels, (size_t)w * h * 4);
-    if (!pixels) {
-        LOGE("out of memory for a %dx%d picture", w, h);
-        return false;
-    }
-
-    fs->pixels = pixels;
-    fs->bufWidth = w;
-    fs->bufHeight = h;
-
-    return true;
-}
-
-static bool framestep_sizeMaps(FrameStep_t *fs, const FrameLayout_t *lo) {
-    const int outW = fs->bufWidth;
-    const int outH = fs->bufHeight;
-
-    if (fs->xMap && fs->mapSrcW == lo->srcW && fs->mapSrcH == lo->srcH &&
-        fs->mapOutW == outW && fs->mapOutH == outH && fs->mapCStep == lo->cStep &&
-        fs->mapTop == lo->top && fs->mapLeft == lo->left) {
-        return true;
-    }
-
-    int *xMap = realloc(fs->xMap, sizeof(int) * (size_t)outW);
-    int *cMap = realloc(fs->cMap, sizeof(int) * (size_t)outW);
-    int *yMap = realloc(fs->yMap, sizeof(int) * (size_t)outH);
-    if (xMap)
-        fs->xMap = xMap;
-    if (cMap)
-        fs->cMap = cMap;
-    if (yMap)
-        fs->yMap = yMap;
-    if (!xMap || !cMap || !yMap) {
-        return false;
-    }
-
-    // Nearest neighbour, and a plain multiply rather than an accumulator so
-    // a rounding drift cannot walk off the end of the plane. 32-bit is
-    // enough: 1920 * 1280 is nowhere near the limit.
-    for (int ox = 0; ox < outW; ox++) {
-        const int sx = lo->left + ((outW == lo->srcW) ? ox : ox * lo->srcW / outW);
-        fs->xMap[ox] = sx;
-        fs->cMap[ox] = (sx / 2) * lo->cStep;
-    }
-    for (int oy = 0; oy < outH; oy++) {
-        fs->yMap[oy] = lo->top + ((outH == lo->srcH) ? oy : oy * lo->srcH / outH);
-    }
-
-    fs->mapSrcW = lo->srcW;
-    fs->mapSrcH = lo->srcH;
-    fs->mapOutW = outW;
-    fs->mapOutH = outH;
-    fs->mapCStep = lo->cStep;
-    fs->mapTop = lo->top;
-    fs->mapLeft = lo->left;
-
-    return true;
-}
-
-// Colour conversion and the scaling in one pass. BT.709, which is what these
-// recordings are, in integer form: the usual 1.164/1.793/0.213/0.533/2.112
-// taken up by 256.
-static void framestep_convert(FrameStep_t *fs, const FrameLayout_t *lo) {
-    const int outW = fs->bufWidth;
-    const int outH = fs->bufHeight;
-    const int uOff = lo->uOff;
-    const int vOff = lo->vOff;
-    const int *xMap = fs->xMap;
-    const int *cMap = fs->cMap;
-
-    for (int oy = 0; oy < outH; oy++) {
-        const int sy = fs->yMap[oy];
-        const uint8_t *yRow = lo->yPlane + (size_t)sy * lo->yStride;
-        const uint8_t *uRow = lo->uPlane + (size_t)(sy / 2) * lo->cStride + uOff;
-        const uint8_t *vRow = lo->vPlane + (size_t)(sy / 2) * lo->cStride + vOff;
-        uint8_t *out = fs->pixels + (size_t)oy * outW * 4;
-
-        for (int ox = 0; ox < outW; ox++) {
-            const int c = cMap[ox];
-            const int y = ((int)yRow[xMap[ox]] - 16) * 298;
-            const int u = (int)uRow[c] - 128;
-            const int v = (int)vRow[c] - 128;
-
-            int r = (y + 459 * v) >> 8;
-            int g = (y - 55 * u - 136 * v) >> 8;
-            int b = (y + 541 * u) >> 8;
-
-            if (r < 0)
-                r = 0;
-            else if (r > 255)
-                r = 255;
-            if (g < 0)
-                g = 0;
-            else if (g > 255)
-                g = 255;
-            if (b < 0)
-                b = 0;
-            else if (b > 255)
-                b = 255;
-
-            // lv_color32_t order.
-            *out++ = (uint8_t)b;
-            *out++ = (uint8_t)g;
-            *out++ = (uint8_t)r;
-            *out++ = 0xff;
-        }
-    }
-}
-
-// Convert a decoded frame into the picture, and give the frame straight back
-// to the decoder. Either way the frame is released here.
-static bool framestep_publish(FrameStep_t *fs, VIDEO_FRAME_INFO_S *info, FrameStepPic_t *pic) {
-    const VIDEO_FRAME_S *vf = &info->VFrame;
-    FrameLayout_t lo;
-    bool ok = false;
-
-    if (!fs->describedFrame) {
-        fs->describedFrame = true;
-        LOGI("frame %ux%u, format %d, strides %u/%u/%u, planes %p/%p/%p, "
-             "offsets t%d b%d l%d r%d",
-             vf->mWidth, vf->mHeight, vf->mPixelFormat,
-             vf->mStride[0], vf->mStride[1], vf->mStride[2],
-             vf->mpVirAddr[0], vf->mpVirAddr[1], vf->mpVirAddr[2],
-             vf->mOffsetTop, vf->mOffsetBottom, vf->mOffsetLeft, vf->mOffsetRight);
-    }
-
-    if (!framestep_layout(vf, &lo)) {
-        LOGE("frame has no usable layout");
-        goto out;
-    }
-
-    // Everything the loops will touch, checked once here rather than a
-    // million times in there. A read past a plane is what took the process
-    // down before this was measured.
-    {
-        const size_t yEnd = (size_t)(lo.top + lo.srcH - 1) * lo.yStride + lo.left + lo.srcW;
-        const size_t cEnd = (size_t)((lo.top + lo.srcH - 1) / 2) * lo.cStride +
-                            ((lo.left + lo.srcW - 1) / 2) * lo.cStep + 2;
-
-        if (yEnd > lo.ySpan || cEnd > lo.cSpan) {
-            LOGE("frame layout would be read past its planes (y %zu of %zu, c %zu of %zu)",
-                 yEnd, lo.ySpan, cEnd, lo.cSpan);
-            goto out;
-        }
-    }
-
-    if (!framestep_sizeBuffer(fs, &lo) || !framestep_sizeMaps(fs, &lo)) {
-        goto out;
-    }
-
-    framestep_convert(fs, &lo);
-
-    fs->shownMs = framestep_frameMs(info);
-    fs->hasShown = true;
-
-    pic->pixels = fs->pixels;
-    pic->width = fs->bufWidth;
-    pic->height = fs->bufHeight;
-    pic->pts_ms = fs->shownMs;
-    ok = true;
-
-out:
-    framestep_release(fs, info);
-    return ok;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -694,8 +433,8 @@ static bool framestep_seekBefore(FrameStep_t *fs, int ms) {
     fs->eof = false;
     fs->keyCount = 0;
 
-    // Paused around the reset, the way the player's own seek does it
-    // (media_seek(): pause, seek, start). Reset while the decode thread was
+    // Paused around the reset, the way MPP's own player seeked (pause, seek,
+    // start). Reset while the decode thread was
     // running, the HEVC decoder aborted the whole app one back-step in a few
     // dozen: SbmFrameFlushFramePic() in libvdecoder asserts (line 1013) that
     // the stream frame handed back is the next in its ring, and a flush racing
@@ -731,11 +470,7 @@ static bool framestep_seekBefore(FrameStep_t *fs, int ms) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-FrameStep_t *framestep_open(const char *path) {
-    return framestep_open_ex(path, 0);
-}
-
-FrameStep_t *framestep_open_ex(const char *path, int extra_frames) {
+FrameStep_t *framestep_open(const char *path, int extra_frames) {
     FrameStep_t *fs = calloc(1, sizeof(*fs));
     if (!fs) {
         return NULL;
@@ -840,7 +575,7 @@ FrameStep_t *framestep_open_ex(const char *path, int extra_frames) {
         goto failed;
     }
 
-    LOGI("stepping %s, codec %d %dx%d on vdec channel %d, %d extra frames",
+    LOGI("decoding %s, codec %d %dx%d on vdec channel %d, %d extra frames",
          path, par->codec_id, par->width, par->height, fs->vdecChn, attr.mExtraFrameNum);
 
     return fs;
@@ -884,29 +619,7 @@ void framestep_close(FrameStep_t *fs) {
 
     free(fs->paramSets);
     free(fs->annexb);
-    free(fs->xMap);
-    free(fs->cMap);
-    free(fs->yMap);
-    free(fs->pixels);
     free(fs);
-}
-
-int framestep_key_before(FrameStep_t *fs, int ms) {
-    if (!fs) {
-        return FRAMESTEP_noKEY;
-    }
-    return framestep_keyBefore(fs, ms);
-}
-
-bool framestep_set_output_size(FrameStep_t *fs, int width, int height) {
-    if (!fs || width <= 0 || height <= 0) {
-        return false;
-    }
-
-    fs->outWidth = width;
-    fs->outHeight = height;
-
-    return true;
 }
 
 int framestep_frame_rate(FrameStep_t *fs) {
@@ -978,19 +691,6 @@ static bool framestep_reach(FrameStep_t *fs, int ms, VIDEO_FRAME_INFO_S *out) {
     return false;
 }
 
-bool framestep_to(FrameStep_t *fs, int ms, FrameStepPic_t *pic) {
-    VIDEO_FRAME_INFO_S frame;
-
-    if (!fs || !pic) {
-        return false;
-    }
-    if (!framestep_reach(fs, ms, &frame)) {
-        return false;
-    }
-
-    return framestep_publish(fs, &frame, pic);
-}
-
 bool framestep_get_frame(FrameStep_t *fs, VIDEO_FRAME_INFO_S *frame) {
     if (!fs || !frame) {
         return false;
@@ -1039,32 +739,6 @@ int framestep_duration_ms(FrameStep_t *fs) {
     }
 
     return (int)(fs->fmt->duration / (AV_TIME_BASE / 1000));
-}
-
-bool framestep_next(FrameStep_t *fs, FrameStepPic_t *pic) {
-    VIDEO_FRAME_INFO_S frame;
-
-    if (!fs || !pic) {
-        return false;
-    }
-
-    // Stepping back read one frame too far to know where to stop. That frame
-    // is this one.
-    if (fs->hasPending) {
-        frame = fs->pending;
-        fs->hasPending = false;
-        return framestep_publish(fs, &frame, pic);
-    }
-
-    if (!fs->hasShown) {
-        return framestep_to(fs, 0, pic);
-    }
-    if (!framestep_decodeOne(fs, &frame)) {
-        LOGD("no frame after %dms", fs->shownMs);
-        return false;
-    }
-
-    return framestep_publish(fs, &frame, pic);
 }
 
 // The last frame before wasMs, left out of the pool for the caller.
@@ -1144,22 +818,6 @@ static bool framestep_prevRaw(FrameStep_t *fs, int wasMs, VIDEO_FRAME_INFO_S *ou
     }
 
     return false;
-}
-
-bool framestep_prev(FrameStep_t *fs, FrameStepPic_t *pic) {
-    VIDEO_FRAME_INFO_S frame;
-
-    if (!fs || !pic) {
-        return false;
-    }
-    if (!fs->hasShown) {
-        return framestep_to(fs, 0, pic);
-    }
-    if (!framestep_prevRaw(fs, fs->shownMs, &frame)) {
-        return false;
-    }
-
-    return framestep_publish(fs, &frame, pic);
 }
 
 bool framestep_get_prev_frame(FrameStep_t *fs, int before_ms, VIDEO_FRAME_INFO_S *frame) {

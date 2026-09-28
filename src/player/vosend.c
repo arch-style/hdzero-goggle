@@ -192,8 +192,8 @@ static ERRORTYPE vosend_callback(void *cookie, MPP_CHN_S *chn, MPP_EVENT_TYPE ev
     return SUCCESS;
 }
 
-// The output the way vdec2vo_createVoChn() sets it up for the player, less
-// the binding.
+// The output the way MPP's player set it up (vdec2vo_createVoChn(), since
+// removed), less the binding.
 static bool vosend_openVo(VoSend_t *vs, int dispBufs) {
     VO_VIDEO_LAYER_ATTR_S layerAttr;
     ERRORTYPE ret;
@@ -378,7 +378,7 @@ bool vosend_run(const char *path, const vosend_opts_t *opts) {
         return ok;
     }
 
-    vs.fs = framestep_open_ex(path, opts->extra_frames);
+    vs.fs = framestep_open(path, opts->extra_frames);
     if (!vs.fs) {
         LOGE("VS cannot open %s", path);
         AW_MPI_SYS_Exit();

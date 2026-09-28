@@ -4,6 +4,11 @@
     autotest-report.py [-v] HDZGOGGLE.log
 
 -v を付けると再開 (resume) の 1 件ごとの行も出す。
+
+再開の行は src/player/avplay.c が出す: target は画面にあったコマ、first は再開後に
+最初に出たコマ、hold は再生を押してから絵が動くまで、sound は音が鳴り始めるまで
+(音なしは -1)、jump は first - target - 1 コマ (0 なら飛びなし)。MPP の頃の
+key/ask/landed/seeks 列 (シークの着地) は、その頃のログにだけ意味がある。
 """
 import re
 import statistics
@@ -75,7 +80,7 @@ def main():
         return 1
 
     print(f"{'file':<16} {'pauses':>6} {'off':>4} | {'steps':>5} {'1frame%':>7} {'wrong':>5} {'ms':>6} | "
-          f"{'resumes':>7} {'ok':>3} {'1seek%':>6} {'hold ms avg/max':>16} {'jump ms avg/max':>16} {'>40':>3}")
+          f"{'resumes':>7} {'ok':>3} {'hold ms avg/max':>16} {'jump ms avg/max':>16} {'>40':>3}")
     for name, b in per_file.items():
         p = b["pause"]
         off = sum(1 for d in p if d.get("delta", 0) != 0)
@@ -86,12 +91,11 @@ def main():
         s_ms = [d.get("ms", 0) for d in s_ok]
         r = b["resume"]
         r_ok = [d for d in r if d.get("result") == "ok"]
-        one_seek = sum(1 for d in r_ok if d.get("seeks") == 1)
         holds = [d.get("hold_ms", 0) for d in r_ok]
         jumps = [abs(d.get("drop_delta", 0)) for d in r]
         big = sum(1 for j in jumps if j > 40)
         print(f"{name:<16} {len(p):>6} {off:>4} | {len(s):>5} {100 * one // len(s_ok) if s_ok else 0:>6}% {wrong:>5} "
-              f"{mean(s_ms):>6.0f} | {len(r):>7} {len(r_ok):>3} {100 * one_seek // len(r_ok) if r_ok else 0:>5}% "
+              f"{mean(s_ms):>6.0f} | {len(r):>7} {len(r_ok):>3} "
               f"{mean(holds):>7.0f}/{max(holds) if holds else 0:<8} {mean(jumps):>7.0f}/{max(jumps) if jumps else 0:<8} {big:>3}")
 
     print()
@@ -118,11 +122,10 @@ def main():
 
     if verbose:
         print()
-        print(f"{'time':<12} {'file':<14} {'target':>7} {'key':>6} {'ask':>6} {'landed':>7} {'first':>6} {'seeks':>5} {'hold':>6} {'jump':>5} result")
+        print(f"{'time':<12} {'file':<14} {'target':>7} {'first':>7} {'hold':>6} {'sound':>6} {'jump':>5} result")
         for d in resumes_all:
-            print(f"{d['_ts']:<12} {d['_file']:<14} {d.get('target', 0):>7} {d.get('key', 0):>6} {d.get('ask', 0):>6} "
-                  f"{d.get('landed', -1):>7} {d.get('first', -1):>6} {d.get('seeks', 0):>5} {d.get('hold_ms', 0):>6} "
-                  f"{d.get('drop_delta', 0):>+5} {d.get('result', '')}")
+            print(f"{d['_ts']:<12} {d['_file']:<14} {d.get('target', 0):>7} {d.get('first', -1):>7} "
+                  f"{d.get('hold_ms', 0):>6} {d.get('sound_ms', -1):>6} {d.get('drop_delta', 0):>+5} {d.get('result', '')}")
     return 0
 
 
