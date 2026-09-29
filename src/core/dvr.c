@@ -511,10 +511,13 @@ static void dvr_update_record_conf() {
 
         ini_putl("venc", "kbps", 24000 / bitrate_scale, REC_CONF);
         ini_putl("venc", "h265", 1, REC_CONF);
-        if (g_hw_stat.av_pal[g_hw_stat.is_av_in])
-            ini_putl("venc", "fps", 50, REC_CONF);
-        else
-            ini_putl("venc", "fps", 60, REC_CONF);
+        // The capture side too: app_switch_to_analog() sets it up as 720p50
+        // whatever the signal, and an NTSC picture reaches the SoC at 60, so
+        // the capture was told 50 for a 60 frame input. Written here, at each
+        // start, it also follows an NTSC/PAL change, which restarts recording.
+        const int fps = g_hw_stat.av_pal[g_hw_stat.is_av_in] ? 50 : 60;
+        ini_putl("vi", "fps", fps, REC_CONF);
+        ini_putl("venc", "fps", fps, REC_CONF);
     } else if (g_source_info.source == SOURCE_HDMI_IN) {
         LOGI("g_hw_stat.hdmiin_vtmg=%d", g_hw_stat.hdmiin_vtmg);
         switch (g_hw_stat.hdmiin_vtmg) {

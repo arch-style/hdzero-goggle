@@ -105,6 +105,11 @@ void osd_toggle() {
     }
 
     settings_put_bool("osd", "is_visible", g_setting.osd.is_visible);
+
+#if defined HDZGOGGLE2
+    if (g_source_info.source == SOURCE_AV_IN || g_source_info.source == SOURCE_AV_MODULE)
+        Display_Osd_shown(g_setting.osd.is_visible, g_setting.record.osd);
+#endif
 }
 
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
@@ -146,6 +151,7 @@ static osd_hdzero_t g_osd_hdzero;
 static lv_obj_t *img_arr[2][HD_VMAX][HD_HMAX];
 static lv_obj_t *scr_main;
 static lv_obj_t *scr_osd[2];                                                    // 0=720p,1=1080p
+static void source_name_update(void);
 static uint32_t osdFont_hd[OSD_VNUM][OSD_HNUM][OSD_HEIGHT_HD][OSD_WIDTH_HD];    // 0x00bbggrr
 static uint32_t osdFont_fhd[OSD_VNUM][OSD_HNUM][OSD_HEIGHT_FHD][OSD_WIDTH_FHD]; // 0x00bbggrr
 static osd_font_t osd_font_hd;
@@ -701,6 +707,8 @@ void osd_elements_set_dummy_sources() {
 void osd_hdzero_update(void) {
     char buf[128], i;
 
+    source_name_update();
+
     if (g_osd_update_cnt < FC_OSD_CHECK_PERIOD)
         g_osd_update_cnt++;
     else if (g_osd_update_cnt == FC_OSD_CHECK_PERIOD) {
@@ -861,12 +869,97 @@ static int draw_osd_on_screen(uint8_t row, uint8_t col) {
     return 0;
 }
 
+// The source's name, for a moment after switching to it (osd_source_name()).
+static lv_obj_t *source_name_label[2];
+static uint32_t source_name_until = 0;
+// Analog can have the goggle's layer hidden by the OSD toggle; the name turns
+// it on for its second and this says so. HDMI in has no layer to lend: with
+// 0x8C at 0x04 the FPGA does not mix the SoC's output in at all (recorded
+// with 0x84 at 0x11 under four VDPO clock settings, only its own REC dot
+// came through), so the name is not shown there.
+static bool source_name_layer_lent = false;
+
+#define SOURCE_NAME_MS 1200
+
+static void source_name_create(uint8_t fhd, lv_obj_t *so) {
+    lv_obj_t *label = lv_label_create(so);
+
+    lv_label_set_text(label, "");
+    lv_obj_set_style_text_font(label, &conthrax_26, 0);
+    lv_obj_set_style_text_color(label, lv_color_make(255, 255, 255), 0);
+    lv_obj_set_style_bg_color(label, lv_color_hex(0x010101), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(label, LV_OPA_100, 0);
+    lv_obj_set_style_radius(label, 12, 0);
+    lv_obj_set_style_pad_hor(label, 18, 0);
+    lv_obj_set_style_pad_ver(label, 8, 0);
+    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, fhd ? 120 : 80);
+    lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+    source_name_label[fhd] = label;
+}
+
+#if defined HDZGOGGLE2
+// Whether the goggle's layer is over the picture for this source right now,
+// and putting it back the way the source has it.
+static bool source_layer_toggled(void) {
+    return g_source_info.source == SOURCE_AV_IN || g_source_info.source == SOURCE_AV_MODULE;
+}
+
+static bool source_layer_off(void) {
+    return source_layer_toggled() && !g_setting.osd.is_visible;
+}
+
+static void source_layer_restore(void) {
+    if (source_layer_toggled())
+        Display_Osd_shown(g_setting.osd.is_visible, g_setting.record.osd);
+}
+#endif
+
+void osd_source_name(const char *name) {
+    for (int i = 0; i < 2; i++) {
+        if (!source_name_label[i])
+            continue;
+        lv_label_set_text(source_name_label[i], name);
+        lv_obj_clear_flag(source_name_label[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    source_name_until = time_ms() + SOURCE_NAME_MS;
+    if (source_name_until == 0)
+        source_name_until = 1;
+
+#if defined HDZGOGGLE2
+    if (source_layer_off()) {
+        I2C_Write(ADDR_FPGA, 0x84, 0x01);
+        source_name_layer_lent = true;
+    }
+#endif
+    LOGI("osd: source name %s", name);
+}
+
+static void source_name_update(void) {
+    if (source_name_until == 0 || (int32_t)(time_ms() - source_name_until) < 0)
+        return;
+
+    source_name_until = 0;
+    for (int i = 0; i < 2; i++) {
+        if (source_name_label[i])
+            lv_obj_add_flag(source_name_label[i], LV_OBJ_FLAG_HIDDEN);
+    }
+#if defined HDZGOGGLE2
+    if (source_name_layer_lent) {
+        source_name_layer_lent = false;
+        if (g_app_state == APP_STATE_VIDEO)
+            source_layer_restore();
+    }
+#endif
+}
+
 static void embedded_osd_init(uint8_t fhd) {
     char buf[128];
     lv_obj_t *so;
 
     fhd &= 1;
     so = scr_osd[fhd];
+
+    source_name_create(fhd, so);
 
     osd_resource_path(buf, "%s", is_fhd, fan1_bmp);
     osd_object_create_img(fhd, &g_osd_hdzero.topfan_speed[fhd], buf, &g_setting.osd.element[OSD_GOGGLE_TOPFAN_SPEED].position, so);

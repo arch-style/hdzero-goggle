@@ -99,6 +99,10 @@ bool HDZero_open_pending(void);
 void HDZero_open_async_wait(void);
 
 void Source_HDMI_in();
+// How many times HDMI in has been set up for a detected timing (goggle 2).
+int HDMI_in_setup_count(void);
+// Reads the HDMI input's signal now, wherever the app is (goggle 2).
+bool HDMI_in_signal_now(void);
 void Source_AV(bool is_av_in);
 void Display_UI_init();
 // True once dispw has actually been run, so callers can tell a real display
@@ -130,6 +134,8 @@ void Display_1080P24(int mode);
 
 void Display_HDZ(int mode, int is_43);
 void Display_Osd(bool enable);
+// Goggle 2: the goggle layer over analog video on or off, keeping record.osd.
+void Display_Osd_shown(bool shown, bool record);
 
 void Set_Brightness(uint8_t bri);
 void Set_Contrast(uint8_t con);

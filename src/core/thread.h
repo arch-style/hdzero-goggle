@@ -18,6 +18,10 @@ typedef struct {
 } threads_obj_t;
 
 int create_threads();
+// Between these, automatic recording neither starts nor stops: a source switch
+// is under way and g_source_info.source is not yet the new one.
+void source_switch_hold(void);
+void source_switch_release(void);
 
 #ifdef __cplusplus
 }

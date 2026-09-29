@@ -1413,8 +1413,22 @@ int AV_in_detect() // return = 1: vtmg to V536 changed
     return ret;
 }
 
+// HDMI_in_detect() sets the display up only when the input timing changes, so
+// coming back to HDMI in with the same signal still there (from the menu, or
+// from another source) found nothing changed and left the panel off. Entering
+// the source forgets what was seen, so the next detect sets it up again.
+static bool hdmi_in_redetect = false;
+
+// Counts the setups HDMI_in_detect() has done, for a caller waiting for one.
+static volatile int hdmi_in_setups = 0;
+
+int HDMI_in_setup_count(void) {
+    return hdmi_in_setups;
+}
+
 void Source_HDMI_in() {
     pthread_mutex_lock(&hardware_mutex);
+    hdmi_in_redetect = true;
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
@@ -1427,6 +1441,19 @@ void Source_HDMI_in() {
     Display_VO_SWITCH(1);
 
     pthread_mutex_unlock(&hardware_mutex);
+}
+
+// HDMI_in_detect() reads the input only in the menu and in HDMI in, so from
+// any other source g_hw_stat.hdmiin_valid is whatever it saw last: the source
+// cycle went to a black HDMI in after the Mac had been unplugged. One read,
+// for a decision made now.
+bool HDMI_in_signal_now(void) {
+    pthread_mutex_lock(&hardware_mutex);
+    g_hw_stat.hdmiin_valid = IT66021_Sig_det();
+    bool valid = g_hw_stat.hdmiin_valid;
+    pthread_mutex_unlock(&hardware_mutex);
+
+    return valid;
 }
 
 int HDMI_in_detect() {
@@ -1444,6 +1471,11 @@ int HDMI_in_detect() {
         g_hw_stat.hdmiin_valid = IT66021_Sig_det();
 
         if (g_hw_stat.source_mode == SOURCE_MODE_HDMIIN) {
+            if (hdmi_in_redetect) {
+                hdmi_in_redetect = false;
+                vtmg_last = -1;
+                cs_last = -1;
+            }
             if (g_hw_stat.hdmiin_valid) {
                 vtmg = IT66021_Get_VTMG(&freq_ref);
                 if (vtmg_last != vtmg) {
@@ -1561,6 +1593,7 @@ int HDMI_in_detect() {
 
                     if (vtmg != HDMIIN_VTMG_UNKNOW)
                         screen.display(1);
+                    hdmi_in_setups++;
                 }
 
                 cs = IT66021_Get_CS();
@@ -1589,6 +1622,15 @@ int HDMI_in_detect() {
 
 void Display_Osd(bool enable) {
     I2C_Write(ADDR_FPGA, 0x84, enable ? 0x11 : 0x01);
+}
+
+// The goggle's whole layer over analog video, for the OSD toggle. Bit 0 lays
+// the SoC's output over the picture and 0x00 is how HDMI in runs, with no
+// layer at all; bit 4 goes with record.osd as in Display_Osd(). The layer
+// carries the FC OSD grid and anything else the app draws, which the element
+// by element hiding in osd_hdzero_update() does not all reach.
+void Display_Osd_shown(bool shown, bool record) {
+    I2C_Write(ADDR_FPGA, 0x84, shown ? (record ? 0x11 : 0x01) : 0x00);
 }
 
 void Set_Brightness(uint8_t bri) {

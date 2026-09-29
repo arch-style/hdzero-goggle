@@ -116,6 +116,21 @@ static void detect_sdcard(void) {
 // Signal loss|accquire processing
 #define SIGNAL_LOSS_DURATION_THR 20 // 25=4 seconds,
 #define SIGNAL_ACCQ_DURATION_THR 10
+
+// The switch functions set g_source_info.source only once the new source is
+// up, and the app state stays VIDEO throughout a switch made from video, so a
+// signal found in the middle of one started recording with the old source's
+// settings: AV IN recorded as H.264 labelled 90fps, the HDMI 720p100 setup it
+// had just left. Held off here until the switch is over.
+static volatile bool source_switching = false;
+
+void source_switch_hold(void) {
+    source_switching = true;
+}
+
+void source_switch_release(void) {
+    source_switching = false;
+}
 static void check_source_signal(int vtmg_change) {
     static uint8_t cnt = 0;
     uint8_t is_valid;
@@ -147,6 +162,11 @@ static void check_source_signal(int vtmg_change) {
     // exit if no SD card or not in video mode
     if (g_setting.record.mode_manual || (!g_sdcard_enable) || (g_app_state != APP_STATE_VIDEO))
         return;
+
+    if (source_switching) {
+        cnt = 0;
+        return;
+    }
 
     // Analog VTMG change -> Restart recording
     if (g_source_info.source >= SOURCE_AV_IN) {

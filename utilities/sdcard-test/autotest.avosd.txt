@@ -1,0 +1,98 @@
+# AV IN: which clock settings put the goggle's OSD over the analog picture.
+# Needs an analog signal on AV IN. Runs 5s after boot, from video.
+#
+# The OSD layer is the SoC's output clocked into the FPGA. 9.6 and 9.5.1 set
+# that clock differently (FPGA 0x8e and the SoC's VDPO clock invert/delay at
+# 0x06542008), and this goggle has 9.5.1's FPGA. Four variants, told apart by
+# the number of beeps and a V1..V4 banner, each recorded to a file of its own
+# with 0x84 at 0x11 (layer on screen and into the recording): the recording is
+# the FPGA's mix, so its frames show whether the OSD made it over the picture,
+# with no need to watch. The files are the four newest in DCIM, in order.
+#
+#   V1  0x8e 0x84, VDPO invert + delay   9.5.1, what the build now does
+#   V2  0x8e 0x01, VDPO plain            9.6's values
+#   V3  0x8e 0x84, VDPO plain
+#   V4  0x8e 0x01, VDPO invert + delay
+#
+# Before that, what the goggle offers for acting as a USB keyboard to a Mac
+# (USB gadget support), into the log only.
+
+echo usb gadget probe
+shell ls /sys/class/udc
+shell ls /sys/kernel/config
+shell cat /proc/mounts
+shell ls -la /proc/config.gz
+shell zcat /proc/config.gz | grep -iE "GADGET|CONFIGFS|F_HID|USB_G_|OTG|MUSB|SUNXI_USB|USB_ROLE|USB_ETH|USB_F_"
+shell find / -xdev -name "*.ko" 2>/dev/null | grep -iE "gadget|hid|composite|g_|udc|usb"
+shell lsmod
+shell ls /sys/bus/platform/drivers
+shell ls /sys/devices/platform/soc
+shell dmesg | grep -iE "usb|otg|udc|gadget|musb" | tail -60
+shell cat /proc/cmdline
+shell ls /sys/class/android_usb /sys/class/android_usb/android0 2>&1
+
+echo av osd variants
+source av
+wait 4000
+autorec off
+rec stop
+wait 2000
+fpga 0x84
+fpga 0x8d
+fpga 0x8e
+mem 0x06542008 1
+
+echo V1 9.5.1
+fpga 0x8e 0x84
+shell aww 0x06542008 0x0000040b
+beep 1
+name V1
+wait 1500
+fpga 0x84 0x11
+rec start
+wait 6000
+rec stop
+wait 2500
+
+echo V2 9.6
+fpga 0x8e 0x01
+shell aww 0x06542008 0x00000003
+beep 2
+name V2
+wait 1500
+fpga 0x84 0x11
+rec start
+wait 6000
+rec stop
+wait 2500
+
+echo V3 0x8e 9.5.1 vdpo 9.6
+fpga 0x8e 0x84
+shell aww 0x06542008 0x00000003
+beep 3
+name V3
+wait 1500
+fpga 0x84 0x11
+rec start
+wait 6000
+rec stop
+wait 2500
+
+echo V4 0x8e 9.6 vdpo 9.5.1
+fpga 0x8e 0x01
+shell aww 0x06542008 0x0000040b
+beep 4
+name V4
+wait 1500
+fpga 0x84 0x11
+rec start
+wait 6000
+rec stop
+wait 2500
+
+echo back to V1
+fpga 0x8e 0x84
+shell aww 0x06542008 0x0000040b
+autorec on
+beep 1
+echo done

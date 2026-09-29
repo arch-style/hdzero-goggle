@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <minIni.h>
@@ -12,6 +13,7 @@
 #include "core/common.hh"
 #include "core/dvr.h"
 #include "core/osd.h"
+#include "core/thread.h"
 #include "driver/beep.h"
 #include "driver/hardware.h"
 #include "driver/it66121.h"
@@ -265,6 +267,7 @@ static void source_stop_recording(void) {
 }
 
 static void page_source_select_hdzero() {
+    source_switch_hold();
     source_stop_recording();
     progress_bar.start = 1;
     app_switch_to_hdzero(true);
@@ -272,31 +275,41 @@ static void page_source_select_hdzero() {
     g_source_info.source = SOURCE_HDZERO;
     dvr_select_audio_source(g_setting.record.audio_source);
     dvr_enable_line_out(true);
+    source_switch_release();
+    osd_source_name("HDZERO");
 }
 
 static void page_source_select_hdmi_in() {
     if (g_source_info.hdmi_in_status) {
+        source_switch_hold();
         source_stop_recording();
         app_switch_to_hdmi_in();
+        source_switch_release();
     }
 }
 
 static void page_source_select_av_in() {
+    source_switch_hold();
     source_stop_recording();
     app_switch_to_analog(1);
     app_state_push(APP_STATE_VIDEO);
     g_source_info.source = SOURCE_AV_IN;
     dvr_select_audio_source(g_setting.record.audio_source);
     dvr_enable_line_out(true);
+    source_switch_release();
+    osd_source_name("AV IN");
 }
 
 static void page_source_select_analog() {
+    source_switch_hold();
     source_stop_recording();
     app_switch_to_analog(0);
     app_state_push(APP_STATE_VIDEO);
     g_source_info.source = SOURCE_AV_MODULE;
     dvr_select_audio_source(g_setting.record.audio_source);
     dvr_enable_line_out(true);
+    source_switch_release();
+    osd_source_name("ANALOG");
 }
 
 void source_toggle() {
@@ -318,10 +331,35 @@ void source_toggle() {
     Analog_Module_Power(0);
 }
 
+// For scripts (autotest): switch to the named source from video, as the
+// source page would. hdzero, hdmi, av (AV IN) or analog (the module bay).
+bool source_select_named(const char *name) {
+    if (g_app_state != APP_STATE_VIDEO) {
+        LOGW("source %s: only from video, the app is in state %d", name, g_app_state);
+        return false;
+    }
+    if (strcmp(name, "hdzero") == 0)
+        page_source_select_hdzero();
+    else if (strcmp(name, "hdmi") == 0)
+        page_source_select_hdmi_in();
+    else if (strcmp(name, "av") == 0)
+        page_source_select_av_in();
+    else if (strcmp(name, "analog") == 0)
+        page_source_select_analog();
+    else {
+        LOGW("source %s: unknown", name);
+        return false;
+    }
+    return true;
+}
+
 void source_cycle() {
     beep_dur(BEEP_SHORT);
     switch (g_source_info.source) {
     case SOURCE_HDZERO:
+#if defined HDZGOGGLE2
+        g_source_info.hdmi_in_status = HDMI_in_signal_now();
+#endif
         if (g_source_info.hdmi_in_status) {
             page_source_select_hdmi_in();
         } else {

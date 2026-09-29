@@ -107,6 +107,8 @@ void osd_font_prefetch_start(void);
 void *thread_osd(void *ptr);
 void osd_resource_path(char *buf, const char *fmt, osd_resource_t osd_resource_type, ...);
 void osd_toggle();
+// Shows the source's name over the picture for a moment; after a switch.
+void osd_source_name(const char *name);
 void osd_analog_rssi_update_location();
 #ifdef __cplusplus
 }

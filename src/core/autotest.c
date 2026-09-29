@@ -45,6 +45,16 @@
 //                        image controls back
 //   mem <addr> [words]   read SoC registers (32-bit words, from /dev/mem)
 //   label <text>         shown on the player's bar, to tell variants apart
+//   source hdzero|hdmi|av|analog   switch source from video, as the source
+//                        page would
+//   name <text>          the source-name banner over the live picture, for a
+//                        moment (osd_source_name())
+//   beep <n>             n short beeps, to tell variants apart by ear
+//   rec start|stop       start or stop the DVR, as the right button would; the
+//                        recording is the FPGA's mix, a way to see the live
+//                        screen (with the OSD in it if FPGA 0x84 bit 4 is set)
+//   autorec off|on       hold automatic recording off (and back), so that
+//                        rec start/stop alone decide where the files split
 //   grab <name> [w h fps]  one frame of the DVR input, i.e. the screen after
 //                        the FPGA, to grab/<name>.nv21 (the whole screen); needs
 //                        a file open in the player. The input stays open until
@@ -76,6 +86,8 @@
 #include "core/common.hh"
 #include "core/dvr.h"
 #include "core/settings.h"
+#include "core/thread.h"
+#include "core/osd.h"
 #include "driver/beep.h"
 #include "driver/hardware.h"
 #include "driver/i2c.h"
@@ -83,6 +95,7 @@
 #include "player/avplay.h"
 #include "player/vigrab.h"
 #include "player/vosend.h"
+#include "ui/page_source.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_player.h"
 
@@ -571,6 +584,29 @@ static bool at_run(int i, char *line) {
         vigrab_close();
     } else if (strcmp(op, "label") == 0) {
         at_label(line);
+    } else if (strcmp(op, "source") == 0) {
+        pthread_mutex_lock(&lvgl_mutex);
+        source_select_named(a1);
+        pthread_mutex_unlock(&lvgl_mutex);
+    } else if (strcmp(op, "name") == 0) {
+        pthread_mutex_lock(&lvgl_mutex);
+        osd_source_name(a1);
+        pthread_mutex_unlock(&lvgl_mutex);
+    } else if (strcmp(op, "rec") == 0) {
+        pthread_mutex_lock(&lvgl_mutex);
+        dvr_cmd(strcmp(a1, "stop") == 0 ? DVR_STOP : DVR_START);
+        pthread_mutex_unlock(&lvgl_mutex);
+    } else if (strcmp(op, "autorec") == 0) {
+        if (strcmp(a1, "on") == 0)
+            source_switch_release();
+        else
+            source_switch_hold();
+    } else if (strcmp(op, "beep") == 0) {
+        int n = a1[0] ? atoi(a1) : 1;
+        for (int k = 0; k < n; k++) {
+            beep();
+            at_sleep_ms(350);
+        }
     } else if (strcmp(op, "echo") == 0) {
         // already logged by at_log_cmd
     } else if (strcmp(op, "halt") == 0) {

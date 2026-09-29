@@ -101,7 +101,15 @@ void app_switch_to_menu() {
     // at all: leave the pipeline composing video with the UI layer over it,
     // exactly as it does for the OSD, and let the menu draw into that layer.
     // The menu is laid out for 1080p, so at 720p it is cropped.
-    bool overlay = g_setting.speed.keep_display && vdpo_timing_applied();
+    //
+    // HDZero only. HDMI in runs with the FPGA's UI layer switched off (0x84 is
+    // 0x00 there) and, at 720p100, the SoC on a 720p30 timing, so a menu drawn
+    // "over" it was never on screen: the press looked like it did nothing, and
+    // the next one quietly left the invisible menu again. Analog is left on
+    // the full switch too, since leaving the menu there does not reopen what
+    // the overlay keeps running.
+    bool overlay = g_setting.speed.keep_display && vdpo_timing_applied() &&
+                   g_source_info.source == SOURCE_HDZERO;
 
     menu_over_video = overlay;
 
@@ -195,7 +203,11 @@ void app_switch_to_analog(bool is_av_in) {
     lvgl_switch_to_720p();
     osd_clear();
     lv_timer_handler();
+#if defined HDZGOGGLE2
+    Display_Osd_shown(g_setting.osd.is_visible, g_setting.record.osd);
+#else
     Display_Osd(g_setting.record.osd);
+#endif
 
     Source_AV(is_av_in);
 
@@ -213,7 +225,12 @@ void app_switch_to_analog(bool is_av_in) {
     dvr_select_audio_source(g_setting.record.audio_source);
     dvr_enable_line_out(true);
 
+#if !defined HDZGOGGLE2
     sleep(1);
+#endif
+    // Goggle 2: the HDZero switch sends the same stop with no wait in front of
+    // it, and this second was spent holding the UI, so every analog switch
+    // ignored the buttons for it.
     system_script(REC_STOP_LIVE);
 }
 
@@ -226,9 +243,30 @@ void app_switch_to_hdmi_in() {
 
     rtc6715.init(0, 0);
 
+#if defined HDZGOGGLE2
+    int setups = HDMI_in_setup_count();
+#endif
+
     Source_HDMI_in();
     IT66121_close();
+#if defined HDZGOGGLE2
+    // Stock waited two seconds flat, holding the UI, for the detect thread to
+    // set the input up so the OSD below can be sized to it. Wait for exactly
+    // that instead, and not at all past a short grace when nothing is plugged
+    // in: there is nothing to set up then, and a black screen that ignores
+    // the buttons for two seconds reads as a hang.
+    uint32_t t0 = time_ms();
+
+    while (HDMI_in_setup_count() == setups && time_ms() - t0 < 2000) {
+        if (!g_hw_stat.hdmiin_valid && time_ms() - t0 > 300)
+            break;
+        usleep(10000);
+    }
+    LOGI("switch mark: hdmi in %s after %ums",
+         HDMI_in_setup_count() != setups ? "set up" : "not set up", time_ms() - t0);
+#else
     sleep(2);
+#endif
 
     if (g_hw_stat.hdmiin_vtmg == HDMIIN_VTMG_1080P60 ||
         g_hw_stat.hdmiin_vtmg == HDMIIN_VTMG_1080P50 ||

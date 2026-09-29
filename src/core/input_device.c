@@ -406,6 +406,17 @@ static void btn_click(void) // short press enter key
     pthread_mutex_unlock(&lvgl_mutex);
 }
 
+// A right-button action that had to wait longer than this for the UI.
+#define RBTN_STALE_MS 700
+
+// The right button is a press like any other, so it gets the same beep.
+static void rbtn_feedback(right_button_t click_type) {
+    if (click_type == RIGHT_LONG_PRESS)
+        input_long_press_feedback();
+    else
+        input_click_feedback();
+}
+
 void rbtn_click(right_button_t click_type) {
     if (g_init_done != 1)
         return;
@@ -413,11 +424,8 @@ void rbtn_click(right_button_t click_type) {
     if (g_app_state == APP_STATE_USER_INPUT_DISABLED)
         return;
 
-    // The right button is a press like any other, so it gets the same beep.
-    if (click_type == RIGHT_LONG_PRESS)
-        input_long_press_feedback();
-    else
-        input_click_feedback();
+    if (scroll_sim_mode || (g_setting.ease.no_dial && btn_value))
+        rbtn_feedback(click_type);
 
     if (scroll_sim_mode) {
         switch (click_type) {
@@ -454,8 +462,21 @@ void rbtn_click(right_button_t click_type) {
         scroll_sim_mode_pending = true;
         beep();
     } else {
+        uint32_t t0 = time_ms();
 
         pthread_mutex_lock(&lvgl_mutex);
+
+        // The lock is held for a whole source or menu switch, which can take
+        // seconds. A press that waited that long runs after it, cycling the
+        // source again when the user was only pressing because nothing seemed
+        // to happen. Drop it, and silently, so the ear can tell.
+        uint32_t waited = time_ms() - t0;
+        if (g_setting.bugfix.drop_queued_presses && waited > RBTN_STALE_MS) {
+            pthread_mutex_unlock(&lvgl_mutex);
+            LOGI("btn: waited %ums for the last action, dropped", waited);
+            return;
+        }
+        rbtn_feedback(click_type);
 
         switch (g_app_state) {
         case APP_STATE_SUBMENU:
@@ -564,12 +585,55 @@ static void roller_down(void) {
     pthread_mutex_unlock(&lvgl_mutex);
 }
 
+// Timed long press. Judged on the kernel's timestamps of the key events, not
+// on when this thread got round to them: a handler that waits for the UI lock
+// holds up the events behind it, and then the press, its repeats and its
+// release are read together a moment apart. Measured on reading, a long press
+// came out as a click, and in video mode that toggles the OSD instead of
+// opening the menu. The kernel's times cannot be delayed like that.
+static uint64_t key_event_ms = 0;  // time of the last EV_KEY
+static uint64_t btn_down_event_ms = 0; // time of the press, 0 = not held
+static uint32_t btn_down_read_ms = 0;  // time_ms() when the press was read
+static bool btn_long_fired = false;
+
+static uint64_t event_ms(const struct input_event *event) {
+    return (uint64_t)event->time.tv_sec * 1000 + event->time.tv_usec / 1000;
+}
+
+// How long the button has been down as of the last key event. The kernel
+// stamps these with the wall clock, which start-up moves when it reads the
+// RTC, so a step back counts as no time rather than wrapping to forever.
+static int64_t btn_held_ms(void) {
+    int64_t held = (int64_t)key_event_ms - (int64_t)btn_down_event_ms;
+    return held > 0 ? held : 0;
+}
+
+static void btn_fire_long(void) {
+    btn_long_fired = true;
+    input_long_press_feedback();
+    btn_press();
+    g_key = DIAL_KEY_PRESS;
+}
+
+static bool btn_timed(void) {
+    return g_setting.speed.timed_long_press && !g_setting.ease.no_dial;
+}
+
+// While the button is held, how long until it becomes a long press by the
+// clock, for the wait below: the key repeats are what used to bring the check
+// round, and a hold that produced none never became one until release.
+static int btn_hold_wait_ms(void) {
+    if (!btn_timed() || btn_down_event_ms == 0 || btn_long_fired)
+        return -1;
+
+    int left = (int)g_setting.input.long_press_ms - (int)(time_ms() - btn_down_read_ms);
+    return left > 0 ? left : 0;
+}
+
 static void get_event(int fd) {
     struct input_event event;
     static int event_type_last = 0;
     static int btn_press_time = 0;
-    static uint32_t btn_down_ms = 0;
-    static bool btn_long_fired = false;
 
     static int roller_value = 0;
 
@@ -625,22 +689,27 @@ static void get_event(int fd) {
                     // threshold. Equality on the count also meant a missed
                     // tenth event lost the press entirely; a flag cannot.
                     if (btn_value) {
-                        if (btn_down_ms == 0)
-                            btn_down_ms = time_ms();
+                        if (btn_down_event_ms == 0) {
+                            btn_down_event_ms = key_event_ms ? key_event_ms : 1;
+                            btn_down_read_ms = time_ms();
+                        }
 
-                        if (!btn_long_fired && (time_ms() - btn_down_ms) >= g_setting.input.long_press_ms) {
-                            btn_long_fired = true;
-                            input_long_press_feedback();
-                            btn_press();
-                            g_key = DIAL_KEY_PRESS;
-                        }
+                        if (!btn_long_fired && btn_held_ms() >= g_setting.input.long_press_ms)
+                            btn_fire_long();
                     } else {
-                        if (!btn_long_fired && btn_down_ms != 0) {
-                            input_click_feedback();
-                            btn_click();
-                            g_key = DIAL_KEY_CLICK;
+                        if (!btn_long_fired && btn_down_event_ms != 0) {
+                            int64_t held = btn_held_ms();
+
+                            if (held >= g_setting.input.long_press_ms) {
+                                LOGI("btn: a %ums hold read only at its release, taken as a long press", (unsigned)held);
+                                btn_fire_long();
+                            } else {
+                                input_click_feedback();
+                                btn_click();
+                                g_key = DIAL_KEY_CLICK;
+                            }
                         }
-                        btn_down_ms = 0;
+                        btn_down_event_ms = 0;
                         btn_long_fired = false;
                     }
                 } else if (btn_value) {
@@ -688,6 +757,7 @@ static void get_event(int fd) {
     case EV_KEY:
         // LOGI("key code%d is %s!", event.code, event.value?"down":"up");
         btn_value = event.value;
+        key_event_ms = event_ms(&event);
         event_type_last = EV_KEY;
         break;
     case EV_ABS:
@@ -744,9 +814,18 @@ static void *thread_input_device(void *ptr) {
     for (;;) {
         struct epoll_event events[EPOLL_FD_CNT];
 
-        int ret = epoll_wait(epfd, events, EPOLL_FD_CNT, DIAL_SENSITIVTY_TIMEOUT_MS);
+        int hold_wait = btn_hold_wait_ms();
+        int ret = epoll_wait(epfd, events, EPOLL_FD_CNT,
+                             hold_wait >= 0 && hold_wait < DIAL_SENSITIVTY_TIMEOUT_MS ? hold_wait : DIAL_SENSITIVTY_TIMEOUT_MS);
         if (ret < 0) {
             perror("epoll_wait");
+            continue;
+        }
+
+        if (ret == 0 && hold_wait >= 0 && hold_wait < DIAL_SENSITIVTY_TIMEOUT_MS) {
+            // Woken for a held button, not by the idle timeout below.
+            if (btn_hold_wait_ms() == 0)
+                btn_fire_long();
             continue;
         }
 
