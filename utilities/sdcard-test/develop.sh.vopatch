@@ -120,13 +120,23 @@ verify_later() {
 	sync
 }
 
+# カードから直接実行すると、カードを抜いた (差し直した) 後にアプリがまだ読み
+# 込んでいない部分を読みに行ったところで SIGBUS で落ちる。実行ファイルは
+# ページ単位で必要になったときにファイルから読まれるので、カードが消えると
+# 読めない。2026-09-30、抜き差し後にメニューへ戻ろうとして真っ暗なまま固まった
+# (crash.log: signal 7 code 2、lv_memcpy が HDZGOGGLE の写像を読んでいた)。
+# RAM (/tmp は tmpfs) にコピーしてそこから実行する。コピーに失敗したら従来どおり。
 if [ -e /mnt/extsd/HDZGOGGLE ]; then
 	APP=/mnt/extsd/HDZGOGGLE
+	if cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE 2>/dev/null && chmod +x /tmp/HDZGOGGLE; then
+		APP=/tmp/HDZGOGGLE
+	fi
 else
 	APP=/mnt/app/app/HDZGOGGLE
 fi
 
 echo "--- boot ---" >> "$REPORT"
+echo "app: $APP" >> "$REPORT"
 echo "inherited LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-(none)}" >> "$REPORT"
 
 # カード直下に novopatch があればパッチを当てない。新しいプレーヤ
@@ -146,7 +156,7 @@ fi
 sync
 
 "$APP" &
-if [ "$APP" = /mnt/extsd/HDZGOGGLE ]; then
+if [ "$APP" != /mnt/app/app/HDZGOGGLE ]; then
 	fallback_if_dead &
 fi
 verify_later &
