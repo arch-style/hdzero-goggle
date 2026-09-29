@@ -43,6 +43,8 @@
 #define AVPLAY_audioWAIT_MS 1500
 
 #define AVPLAY_sendWAIT_MS 100
+// Late frames let go in a row at most, before one is shown however late.
+#define AVPLAY_dropMAX 6
 #define AVPLAY_stopWAIT_MS 500
 
 #if defined HDZBOXPRO
@@ -54,15 +56,16 @@
 #endif
 #define AVPLAY_uiCHN 2
 
-// Being tried (avplay_set_screen(), avplay_set_scan()).
+// Where the picture goes, from the next avplay_open() (avplay_set_output()).
 static int avplay_screenW = AVPLAY_WIDTH;
 static int avplay_screenH = AVPLAY_HEIGHT;
-static int avplay_scanMode = 0;
-static struct {
-    int frames;
-    int64_t us, maxUs;
-    long hits;
-} avplay_scanStat;
+static bool avplay_live = false;
+// For measuring: false leaves the frames as they are on the live side.
+static bool avplay_clear = true;
+
+void avplay_set_clear(bool on) {
+    avplay_clear = on;
+}
 
 struct AvPlay {
     FrameStep_t *fs;
@@ -72,11 +75,12 @@ struct AvPlay {
     VO_LAYER voLayer;
     VO_CHN voChn;
     int uiLayer;
-    // The frame avplay_scan() last went over, so the pump can do it while it
-    // waits for the frame's time and avplay_show() does not do it again.
-    const void *scannedY;
-    uint64_t scannedPts;
-    unsigned shown; // frames, for avplay_colorspace()
+    // The frame avplay_clearKey() last went over, so the pump can do it while
+    // it waits for the frame's time and avplay_show() does not do it again.
+    const void *clearedY;
+    uint64_t clearedPts;
+    unsigned shown;     // frames, for avplay_colorspace()
+    int videoW, videoH; // the first frame's
     uint64_t voPts;
 
     int durationMs;
@@ -132,18 +136,22 @@ static ERRORTYPE avplay_voCallback(void *cookie, MPP_CHN_S *chn, MPP_EVENT_TYPE 
     return SUCCESS;
 }
 
-// Being tried: on a screen smaller than LVGL's 1920x1080, the display engine
-// shows the UI layer (the bar) scaled into it instead of cut off. MPP sets the
+// On a screen smaller than LVGL's 1920x1080 (the goggle 2's 720p60) the
+// display engine shows the UI layer (the bar) scaled into it instead of cut
+// off; the FPGA scales it back up with the picture. MPP sets the
 // layer back to 1920x1080 at every AW_MPI_SYS_Init(), so this follows it.
-static struct disp_rect avplay_uiWinSaved;
 static bool avplay_uiWinChanged = false;
 
+// fit: into the screen, after MPP's reset. Otherwise, and for a 1080p screen,
+// back to the whole 1920x1080 window, for once the menu's display is back (on
+// the 720p screen still up at close a 1080p window is not taken).
 static void avplay_uiWindow(bool fit) {
     struct disp_layer_config cfg;
     unsigned long args[4] = {0, (unsigned long)&cfg, 1, 0};
     int fd;
 
-    if (fit ? avplay_screenW == AVPLAY_WIDTH : !avplay_uiWinChanged) {
+    const bool whole = !fit || avplay_screenW == AVPLAY_WIDTH;
+    if (whole && !avplay_uiWinChanged) {
         return;
     }
     fd = open("/dev/disp", O_RDWR);
@@ -154,49 +162,44 @@ static void avplay_uiWindow(bool fit) {
     cfg.channel = AVPLAY_uiCHN;
     cfg.layer_id = 0;
     if (ioctl(fd, DISP_LAYER_GET_CONFIG, args) == 0) {
-        if (fit) {
-            avplay_uiWinSaved = cfg.info.screen_win;
-            cfg.info.screen_win.x = 0;
-            cfg.info.screen_win.y = 0;
-            cfg.info.screen_win.width = avplay_screenW;
-            cfg.info.screen_win.height = avplay_screenH;
-        } else {
-            cfg.info.screen_win = avplay_uiWinSaved;
-        }
+        LOGI("UI layer was window %d,%d %ux%u, fb %ux%u crop %llux%llu", cfg.info.screen_win.x,
+             cfg.info.screen_win.y, cfg.info.screen_win.width, cfg.info.screen_win.height,
+             cfg.info.fb.size[0].width, cfg.info.fb.size[0].height,
+             (unsigned long long)(cfg.info.fb.crop.width >> 32),
+             (unsigned long long)(cfg.info.fb.crop.height >> 32));
+        cfg.info.screen_win.x = 0;
+        cfg.info.screen_win.y = 0;
+        cfg.info.screen_win.width = whole ? AVPLAY_WIDTH : avplay_screenW;
+        cfg.info.screen_win.height = whole ? AVPLAY_HEIGHT : avplay_screenH;
+        cfg.info.fb.crop.x = 0;
+        cfg.info.fb.crop.y = 0;
+        cfg.info.fb.crop.width = (unsigned long long)AVPLAY_WIDTH << 32;
+        cfg.info.fb.crop.height = (unsigned long long)AVPLAY_HEIGHT << 32;
         const int ret = ioctl(fd, DISP_LAYER_SET_CONFIG, args);
-        avplay_uiWinChanged = fit && ret == 0;
-        LOGI("UI layer window %ux%u (fb crop %llux%llu): %d", cfg.info.screen_win.width,
-             cfg.info.screen_win.height, (unsigned long long)(cfg.info.fb.crop.width >> 32),
-             (unsigned long long)(cfg.info.fb.crop.height >> 32), ret);
+        avplay_uiWinChanged = !whole && ret == 0;
+        LOGI("UI layer window now %ux%u: %d", cfg.info.screen_win.width, cfg.info.screen_win.height, ret);
     }
     close(fd);
 }
 
-// Being tried: the colour space the display engine reads the video layer in.
-// MPP's renderer declares it BT.601, and the output on the live side is BT.709,
-// so the engine converts, which moves a coloured pixel's luma by a code or
-// more (and its colour a little). Declared as the output's, the recording's
-// values would reach the output as they are, as the live picture's do. The
-// renderer hands libhwdisplay the layer's source once and libhwdisplay pushes
-// its copy with every frame, so the copy is what gets changed
-// (hwd_layer_set_src()). 0 leaves it; 1 BT.709, 2 BT.601, 3 BT.709 full,
-// 4 BT.601 full.
-static int avplay_csMode = 0;
-
-void avplay_set_colorspace(int mode) {
-    avplay_csMode = mode;
-    LOGI("colour space mode %d", mode);
+void avplay_restore_ui(void) {
+    avplay_uiWindow(false);
 }
 
+// On the live side the display engine's output is BT.709, and MPP's renderer
+// declares the video layer BT.601, so the engine converted every frame: that
+// moved a coloured pixel's luma by up to several codes, which avplay_clearKey()
+// cannot see coming, and tinted the colours a little. Declared BT.709, a
+// recording's values reach the output as they are, as the live picture's do
+// (measured: 92% of a frame's luma identical against 33%). The renderer hands
+// libhwdisplay the layer's source once and libhwdisplay pushes its copy with
+// every frame, so the copy is what is changed (hwd_layer_set_src()).
 static void avplay_colorspace(void) {
-    static const int spaces[] = {0, DISP_BT709, DISP_BT601, DISP_BT709_F, DISP_BT601_F};
+    const int want = DISP_BT709;
     struct disp_layer_config cfg;
     unsigned long args[4] = {0, (unsigned long)&cfg, 1, 0};
     int fd;
 
-    if (avplay_csMode <= 0 || avplay_csMode >= (int)(sizeof(spaces) / sizeof(spaces[0]))) {
-        return;
-    }
     fd = open("/dev/disp", O_RDWR);
     if (fd < 0) {
         return;
@@ -211,7 +214,6 @@ static void avplay_colorspace(void) {
                 cfg.info.fb.format < DISP_FORMAT_YUV444_I_AYUV) {
                 continue;
             }
-            const int want = spaces[avplay_csMode];
             if ((int)cfg.info.fb.color_space != want) {
                 struct src_info src;
                 memset(&src, 0, sizeof(src));
@@ -321,23 +323,27 @@ static void avplay_closeVo(AvPlay_t *ap) {
     }
 
     AW_MPI_VO_DisableVideoLayer(ap->voLayer);
-    avplay_uiWindow(false);
     AW_MPI_VO_RemoveOutsideVideoLayer(ap->uiLayer);
     AW_MPI_VO_Disable(ap->voDev);
 }
 
-// Being tried: the live side of the display shows the live layer wherever
-// the SoC's output is the OSD's transparent grey, luma exactly 125 with
-// neutral chroma. At 720p60 the frame reaches the output pixel for pixel
-// (luma unchanged but for full-range blacks clamped to 16), so moving the
-// frame's luma off 125 keeps the key from ever matching. The conversion to
-// the output can move a slightly coloured pixel's luma by one, so mode n
-// clears a band n-2 wide either side of 125 (2: 125 only, 3: 124-126,
-// 4: 123-127), sending each value to the band's two neighbours with a 4x4
-// ordered dither in proportion, so the average stays and no contour shows.
-// Mode 6 clears 121-129, 9-11 predict the output (avplay_predictRow()).
-// Mode 1 only counts 125s. The decoder predicts from these frames, so a
-// change carries into the next ones (and is cleared again there).
+// The live side shows the live layer wherever the SoC's output has luma
+// exactly 125: that is the live OSD's transparent grey (0x7f7f7f,
+// style_osd), and recordings have it here and there, around lights and
+// letters mostly, which came through as specks (magenta with the receiver
+// off). With the frame reaching the output pixel for pixel (a screen its own
+// size, the layer in the output's colour space) moving the frame's luma off
+// 125 keeps the key from matching. A band 123-127 is cleared, not 125
+// alone: the output's rounding still moves some pixels by one. Each value
+// goes to 122 or 128 by a 4x4 ordered dither in proportion, so the average
+// stays and no contour shows. Measured on a 720p recording: 4 pixels through
+// in 40 frames, against about 250 a frame, at about 2.5ms a frame (NEON: 16
+// pixels at a time, and only blocks with a value in the band touched). The
+// decoder predicts from these frames, so a change carries into the next
+// ones, where it is cleared again.
+#define AVPLAY_keyLUMA 125
+#define AVPLAY_keyHALF 2
+
 static const unsigned char avplay_bayer[4][4] = {
     {0, 8, 2, 10},
     {12, 4, 14, 6},
@@ -345,167 +351,123 @@ static const unsigned char avplay_bayer[4][4] = {
     {15, 7, 13, 5},
 };
 
-static long avplay_clearRow(unsigned char *row, int width, int r, int lo, int hi, bool change) {
-    const uint8x16_t vlo = vdupq_n_u8((uint8_t)lo);
-    const uint8x16_t vspan = vdupq_n_u8((uint8_t)(hi - lo));
+// 16 pixels at a time throughout: a band pixel v goes up to hi + 1 when
+// v - (lo - 1) > up[x & 3], its dither threshold, else down to lo - 1. up[]
+// is (2b + 1) * gap / 32 for the row's Bayer values b, rounded down, which
+// gives the same choice as comparing 32 (v - lo + 1) with (2b + 1) gap.
+static void avplay_clearRow(unsigned char *row, int width, int r) {
+    const int lo = AVPLAY_keyLUMA - AVPLAY_keyHALF, hi = AVPLAY_keyLUMA + AVPLAY_keyHALF;
     const int gap = hi - lo + 2; // between the two values a band pixel goes to
-    long hits = 0;
-
-    for (int x = 0; x + 16 <= width; x += 16) {
-        const uint8x16_t in = vcleq_u8(vsubq_u8(vld1q_u8(row + x), vlo), vspan);
-        const uint64x1_t any = vorr_u64(vreinterpret_u64_u8(vget_low_u8(in)),
-                                        vreinterpret_u64_u8(vget_high_u8(in)));
-        if (vget_lane_u64(any, 0) == 0) {
-            continue;
-        }
-        for (int k = x; k < x + 16; k++) {
-            const int v = row[k];
-            if (v < lo || v > hi) {
-                continue;
-            }
-            hits++;
-            if (change) {
-                // Up with probability (v - (lo - 1)) / gap.
-                const int b = avplay_bayer[r & 3][k & 3];
-                row[k] = (uint8_t)((32 * (v - lo + 1) > (2 * b + 1) * gap) ? hi + 1 : lo - 1);
-            }
-        }
+    uint8_t up[16];
+    for (int k = 0; k < 16; k++) {
+        up[k] = (uint8_t)(((2 * avplay_bayer[r & 3][k & 3] + 1) * gap) / 32);
     }
-    return hits;
-}
-
-// Predicted: the output's conversion moves a coloured pixel's luma by about
-// -(0.242 (V - 128) + 0.137 (U - 128)), measured on this display (the
-// decoder's frames are BT.601, the output seemingly BT.709). A pixel near
-// mid grey is moved only when its predicted output is within `half` (in
-// 1/256) of 125, to 125 -/+ (half + 1/2) by the dither, so an error of a code
-// in the prediction still misses 125. vPlane/uPlane are the frame's
-// quarter-size chroma planes.
-static long avplay_predictRow(unsigned char *row, const unsigned char *vRow, const unsigned char *uRow,
-                              int width, int r, int half256) {
-    const uint8x16_t vlo = vdupq_n_u8(125 - 12);
-    const uint8x16_t vspan = vdupq_n_u8(24);
-    long hits = 0;
-
-    const int16x8_t k125 = vdupq_n_s16(125), k128 = vdupq_n_s16(128);
-    const int16x8_t kMax = vdupq_n_s16(13), kMin = vdupq_n_s16(-13), kHalf = vdupq_n_s16(half256);
+    const uint8x16_t vUp = vld1q_u8(up);
+    const uint8x16_t vBelow = vdupq_n_u8((uint8_t)(lo - 1));
+    const uint8x16_t vSpan = vdupq_n_u8((uint8_t)(hi - lo));
+    const uint8x16_t vLo = vdupq_n_u8((uint8_t)lo);
+    const uint8x16_t vDown = vdupq_n_u8((uint8_t)(lo - 1));
+    const uint8x16_t vHigh = vdupq_n_u8((uint8_t)(hi + 1));
 
     for (int x = 0; x + 16 <= width; x += 16) {
-        const uint8x16_t yv = vld1q_u8(row + x);
-        const uint8x16_t near = vcleq_u8(vsubq_u8(yv, vlo), vspan);
-        if (vget_lane_u64(vorr_u64(vreinterpret_u64_u8(vget_low_u8(near)),
-                                   vreinterpret_u64_u8(vget_high_u8(near))),
+        const uint8x16_t v = vld1q_u8(row + x);
+        const uint8x16_t in = vcleq_u8(vsubq_u8(v, vLo), vSpan);
+        if (vget_lane_u64(vorr_u64(vreinterpret_u64_u8(vget_low_u8(in)),
+                                   vreinterpret_u64_u8(vget_high_u8(in))),
                           0) == 0) {
             continue;
         }
-        // The same prediction as below, eight pixels at a time, in 1/256 of
-        // a code about 125: (y - 125) * 256 - (62 dv + 35 du).
-        const uint8x8x2_t vz = vzip_u8(vld1_u8(vRow + (x >> 1)), vld1_u8(vRow + (x >> 1)));
-        const uint8x8x2_t uz = vzip_u8(vld1_u8(uRow + (x >> 1)), vld1_u8(uRow + (x >> 1)));
-        uint16x8_t hit[2];
-        for (int h = 0; h < 2; h++) {
-            const uint8x8_t y8 = h ? vget_high_u8(yv) : vget_low_u8(yv);
-            int16x8_t dy = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(y8)), k125);
-            dy = vmaxq_s16(vminq_s16(dy, kMax), kMin);
-            const int16x8_t dv = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vz.val[h])), k128);
-            const int16x8_t du = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(uz.val[h])), k128);
-            const int16x8_t shift = vnegq_s16(vmlaq_n_s16(vmulq_n_s16(dv, 62), du, 35));
-            const int16x8_t p = vmlaq_n_s16(shift, dy, 256);
-            hit[h] = vandq_u16(vcgeq_s16(p, vnegq_s16(kHalf)), vcltq_s16(p, kHalf));
-        }
-        const uint16x8_t any = vorrq_u16(hit[0], hit[1]);
-        if (vget_lane_u64(vorr_u64(vreinterpret_u64_u16(vget_low_u16(any)),
-                                   vreinterpret_u64_u16(vget_high_u16(any))),
-                          0) == 0) {
-            continue;
-        }
-        for (int k = x; k < x + 16; k++) {
-            const int v = row[k];
-            if (v < 125 - 12 || v > 125 + 12) {
-                continue;
-            }
-            const int dv = vRow[k >> 1] - 128, du = uRow[k >> 1] - 128;
-            const int shift256 = -(62 * dv + 35 * du);
-            const int p256 = v * 256 + shift256; // predicted output, 1/256
-            if (p256 < 125 * 256 - half256 || p256 >= 125 * 256 + half256) {
-                continue;
-            }
-            hits++;
-            // To one side or the other, up with the predicted value's share.
-            const int b = avplay_bayer[r & 3][k & 3];
-            const int span256 = 2 * half256 + 256;
-            const int from256 = p256 - (125 * 256 - half256 - 128);
-            const int up = 16 * from256 > (2 * b + 1) * span256 / 2;
-            const int target256 = up ? 125 * 256 + half256 + 128 : 125 * 256 - half256 - 128;
-            int out = (target256 - shift256 + 128) >> 8;
-            row[k] = (uint8_t)(out < 0 ? 0 : out > 255 ? 255 : out);
-        }
+        const uint8x16_t goUp = vcgtq_u8(vsubq_u8(v, vBelow), vUp);
+        const uint8x16_t to = vbslq_u8(goUp, vHigh, vDown);
+        vst1q_u8(row + x, vbslq_u8(in, to, v));
     }
-    return hits;
 }
 
-static void avplay_scan(VIDEO_FRAME_INFO_S *frame) {
+static void avplay_clearRows(VIDEO_FRAME_S *f, int r0, int r1) {
+    unsigned char *y = f->mpVirAddr[0];
+    const int width = (int)f->mWidth;
+
+    for (int r = r0; r < r1; r++) {
+        avplay_clearRow(y + (size_t)r * width, width, r);
+    }
+}
+
+// A frame wider than 720p's is shared with a second thread, half the rows
+// each. The time is in reading the frame (uncached, some 300MB/s), so the
+// two together take about as long as one, but the long stalls go: on a
+// 1080p60 clip 4-8 frames in 8s came late against 20-27, where 720p's
+// single thread's 2.5ms a frame leaves 1-2. (Flushing only the rows
+// changed was slower still, 10ms: the whole plane's flush is 0.2ms.)
+static struct {
+    pthread_t thread;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    bool started, busy;
+    VIDEO_FRAME_S *frame;
+    int r0, r1;
+} avplay_helper = {.lock = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER};
+
+static void *avplay_helperRun(void *arg) {
+    (void)arg;
+    pthread_mutex_lock(&avplay_helper.lock);
+    for (;;) {
+        while (!avplay_helper.busy) {
+            pthread_cond_wait(&avplay_helper.cond, &avplay_helper.lock);
+        }
+        VIDEO_FRAME_S *f = avplay_helper.frame;
+        const int r0 = avplay_helper.r0, r1 = avplay_helper.r1;
+        pthread_mutex_unlock(&avplay_helper.lock);
+        avplay_clearRows(f, r0, r1);
+        pthread_mutex_lock(&avplay_helper.lock);
+        avplay_helper.busy = false;
+        pthread_cond_broadcast(&avplay_helper.cond);
+    }
+    return NULL;
+}
+
+static void avplay_clearKey(AvPlay_t *ap, VIDEO_FRAME_INFO_S *frame) {
     VIDEO_FRAME_S *f = &frame->VFrame;
     unsigned char *y = f->mpVirAddr[0];
     const int width = (int)f->mWidth, height = (int)f->mHeight;
-    const int mode = avplay_scanMode;
-    const int64_t t0 = avplay_nowUs();
-    long hits = 0;
 
+    ap->clearedY = y;
+    ap->clearedPts = f->mpts;
     if (!y) {
         return;
     }
-    if (mode >= 9) {
-        // YV12: V, then U, each a quarter of the luma.
-        const unsigned char *p1 = f->mpVirAddr[1];
-        const unsigned char *p2 = f->mpVirAddr[2] ? f->mpVirAddr[2] : p1 + (size_t)(width / 2) * (height / 2);
-        const unsigned char *vPlane = mode == 10 ? p2 : p1;
-        const unsigned char *uPlane = mode == 10 ? p1 : p2;
-        const int half256 = mode == 11 ? 640 : 384;
-        static int logged = 0;
-        if (logged != mode) {
-            logged = mode;
-            LOGI("scan %d: planes %p %p %p, %dx%d", mode, f->mpVirAddr[0], f->mpVirAddr[1],
-                 f->mpVirAddr[2], width, height);
+    const int64_t t0 = avplay_nowUs();
+    if (width > 1280) {
+        if (!avplay_helper.started) {
+            avplay_helper.started = pthread_create(&avplay_helper.thread, NULL, avplay_helperRun, NULL) == 0;
         }
-        for (int r = 0; r < height; r++) {
-            const size_t c = (size_t)(r >> 1) * (width / 2);
-            hits += avplay_predictRow(y + (size_t)r * width, vPlane + c, uPlane + c, width, r, half256);
+        if (avplay_helper.started) {
+            const int half = (height / 2) & ~3;
+            pthread_mutex_lock(&avplay_helper.lock);
+            avplay_helper.frame = f;
+            avplay_helper.r0 = half;
+            avplay_helper.r1 = height;
+            avplay_helper.busy = true;
+            pthread_cond_broadcast(&avplay_helper.cond);
+            pthread_mutex_unlock(&avplay_helper.lock);
+            avplay_clearRows(f, 0, half);
+            pthread_mutex_lock(&avplay_helper.lock);
+            while (avplay_helper.busy) {
+                pthread_cond_wait(&avplay_helper.cond, &avplay_helper.lock);
+            }
+            pthread_mutex_unlock(&avplay_helper.lock);
+        } else {
+            avplay_clearRows(f, 0, height);
         }
     } else {
-        const int half = mode == 6 ? 4 : mode >= 2 ? mode - 2 : 0;
-        for (int r = 0; r < height; r++) {
-            hits += avplay_clearRow(y + (size_t)r * width, width, r, 125 - half, 125 + half, mode >= 2);
-        }
+        avplay_clearRows(f, 0, height);
     }
-    if (mode >= 2) {
-        AW_MPI_SYS_MmzFlushCache(f->mPhyAddr[0], y, (unsigned)(width * height));
-    }
-
-    const int64_t us = avplay_nowUs() - t0;
-    avplay_scanStat.frames++;
-    avplay_scanStat.us += us;
-    avplay_scanStat.hits += hits;
-    if (us > avplay_scanStat.maxUs) {
-        avplay_scanStat.maxUs = us;
-    }
-    if (avplay_scanStat.frames == 60) {
-        LOGI("scan %d: %dx%d, 60 frames, %lldus a frame, worst %lldus, %ld hits a frame", mode, width,
-             height, (long long)(avplay_scanStat.us / 60), (long long)avplay_scanStat.maxUs,
-             avplay_scanStat.hits / 60);
-        memset(&avplay_scanStat, 0, sizeof(avplay_scanStat));
-    }
+    AW_MPI_SYS_MmzFlushCache(f->mPhyAddr[0], y, (unsigned)(width * height));
 }
 
-void avplay_set_scan(int mode) {
-    avplay_scanMode = mode;
-    memset(&avplay_scanStat, 0, sizeof(avplay_scanStat));
-    LOGI("scan mode %d", mode);
-}
-
-void avplay_set_screen(int width, int height) {
+void avplay_set_output(int width, int height, bool live) {
     avplay_screenW = width;
     avplay_screenH = height;
+    avplay_live = live;
 }
 
 // Puts a frame from the decoder on screen, and it is then the position.
@@ -513,9 +475,9 @@ void avplay_set_screen(int width, int height) {
 static bool avplay_show(AvPlay_t *ap, VIDEO_FRAME_INFO_S *frame) {
     const int ms = (int)(frame->VFrame.mpts / 1000);
 
-    if (avplay_scanMode &&
-        !(frame->VFrame.mpVirAddr[0] == ap->scannedY && frame->VFrame.mpts == ap->scannedPts)) {
-        avplay_scan(frame);
+    if (avplay_live && avplay_clear &&
+        !(frame->VFrame.mpVirAddr[0] == ap->clearedY && frame->VFrame.mpts == ap->clearedPts)) {
+        avplay_clearKey(ap, frame);
     }
 
     ap->voPts += AVPLAY_voSTEP_US;
@@ -533,7 +495,7 @@ static bool avplay_show(AvPlay_t *ap, VIDEO_FRAME_INFO_S *frame) {
     ap->positionMs = ms;
     pthread_mutex_unlock(&ap->lock);
     // Checked again now and then in case the renderer sets it back.
-    if (avplay_csMode && (ap->shown++ % 30) == 0) {
+    if (avplay_live && (ap->shown++ % 30) == 0) {
         avplay_colorspace();
     }
     return true;
@@ -577,6 +539,10 @@ static void avplay_run(AvPlay_t *ap, int divider) {
     int sent = 0, late = 0;
     int64_t worst = 0;
     int64_t nextLog = avplay_nowUs() + 1000000;
+    // Where the time went, for the late frames above all.
+    int64_t getSum = 0, getMax = 0, clearSum = 0, clearMax = 0, showSum = 0, showMax = 0;
+    int lateLogged = 0;
+    int dropped = 0, droppedInRow = 0;
 
     for (;;) {
         VIDEO_FRAME_INFO_S frame;
@@ -584,6 +550,7 @@ static void avplay_run(AvPlay_t *ap, int divider) {
         if (!avplay_wanted(ap)) {
             break;
         }
+        const int64_t tGet = avplay_nowUs();
         if (!framestep_get_frame(ap->fs, &frame)) {
             LOGI("end of the file at %dms", ap->positionMs);
             pthread_mutex_lock(&ap->lock);
@@ -598,11 +565,7 @@ static void avplay_run(AvPlay_t *ap, int divider) {
             break;
         }
 
-        if (avplay_scanMode) {
-            avplay_scan(&frame);
-            ap->scannedY = frame.VFrame.mpVirAddr[0];
-            ap->scannedPts = frame.VFrame.mpts;
-        }
+        const int64_t tGot = avplay_nowUs();
 
         const int64_t pts = (int64_t)frame.VFrame.mpts;
         int64_t due = -1;
@@ -642,6 +605,24 @@ static void avplay_run(AvPlay_t *ap, int divider) {
             due = base + (pts - pts0) * divider;
         }
 
+        // A frame already a frame late is let go, up to a few in a row, so
+        // the picture catches the sound up at once instead of a frame's slack
+        // at a time (it starts about 70ms behind), and none of the time goes
+        // on clearing frames nobody sees.
+        if (due >= 0 && avplay_nowUs() - due > ap->frameUs && droppedInRow < AVPLAY_dropMAX) {
+            framestep_put_frame(ap->fs, &frame);
+            dropped++;
+            droppedInRow++;
+            continue;
+        }
+        droppedInRow = 0;
+
+        const int64_t tClear = avplay_nowUs();
+        if (avplay_live && avplay_clear) {
+            avplay_clearKey(ap, &frame);
+        }
+        const int64_t tCleared = avplay_nowUs();
+
         if (due < 0 || !avplay_waitUntil(ap, due)) {
             // Called off while waiting: this frame is the next one out.
             framestep_unget_frame(ap->fs, &frame);
@@ -652,12 +633,27 @@ static void avplay_run(AvPlay_t *ap, int divider) {
         if (lateBy > worst) {
             worst = lateBy;
         }
-        if (lateBy > ap->frameUs) {
+        const bool isLate = lateBy > ap->frameUs;
+        if (isLate) {
             late++;
         }
 
+        const int64_t tShow = avplay_nowUs();
         if (!avplay_show(ap, &frame)) {
             continue;
+        }
+        const int64_t getUs = tGot - tGet, clearUs = tCleared - tClear, showUs = avplay_nowUs() - tShow;
+        getSum += getUs;
+        clearSum += clearUs;
+        showSum += showUs;
+        getMax = getUs > getMax ? getUs : getMax;
+        clearMax = clearUs > clearMax ? clearUs : clearMax;
+        showMax = showUs > showMax ? showUs : showMax;
+        if (isLate && lateLogged < 5) {
+            lateLogged++;
+            LOGI("late frame %d (%dms): %lldms late; decoder %lldus, clearing %lldus, output %lldus", sent,
+                 (int)(pts / 1000), (long long)(lateBy / 1000), (long long)getUs, (long long)clearUs,
+                 (long long)showUs);
         }
         sent++;
 
@@ -684,8 +680,13 @@ static void avplay_run(AvPlay_t *ap, int divider) {
         }
     }
 
-    LOGI("played %d frames at 1/%d, %d late, worst %dms, %s", sent, divider, late,
-         (int)(worst / 1000), wallClock ? "by the wall clock" : "by the sound");
+    LOGI("played %d frames at 1/%d, %d late, worst %dms, %d let go, %s", sent, divider, late,
+         (int)(worst / 1000), dropped, wallClock ? "by the wall clock" : "by the sound");
+    if (sent > 0) {
+        LOGI("per frame: decoder %lldus (worst %lldus), clearing %lldus (%lldus), output %lldus (%lldus)",
+             (long long)(getSum / sent), (long long)getMax, (long long)(clearSum / sent),
+             (long long)clearMax, (long long)(showSum / sent), (long long)showMax);
+    }
 }
 
 static void *avplay_pump(void *arg) {
@@ -779,8 +780,17 @@ AvPlay_t *avplay_open(const char *path) {
     ap->threadRunning = true;
 
     VIDEO_FRAME_INFO_S frame;
-    if (!framestep_get_frame(ap->fs, &frame) || !avplay_show(ap, &frame)) {
+    if (!framestep_get_frame(ap->fs, &frame)) {
         LOGE("no first frame in %s", path);
+        avplay_close(ap);
+        return NULL;
+    }
+    ap->videoW = (int)frame.VFrame.mWidth;
+    ap->videoH = frame.VFrame.mOffsetBottom > frame.VFrame.mOffsetTop
+                     ? frame.VFrame.mOffsetBottom - frame.VFrame.mOffsetTop
+                     : (int)frame.VFrame.mHeight;
+    if (!avplay_show(ap, &frame)) {
+        LOGE("the first frame of %s did not go out", path);
         avplay_close(ap);
         return NULL;
     }
@@ -815,6 +825,11 @@ void avplay_close(AvPlay_t *ap) {
     pthread_cond_destroy(&ap->cond);
     pthread_mutex_destroy(&ap->lock);
     free(ap);
+}
+
+void avplay_video_size(AvPlay_t *ap, int *width, int *height) {
+    *width = ap->videoW;
+    *height = ap->videoH;
 }
 
 int avplay_duration_ms(AvPlay_t *ap) {

@@ -1,0 +1,78 @@
+# コマ遅れの切り分け（約 2 分半、写真は不要）。開いてすぐから 8 秒ずつ再生して、
+# 遅れたコマごとに「デコード待ち・書き換え・出力」のどこで時間を使ったかをログに取ります。
+# 書き換えあり(1)/なし(0) × 720p の録画 / 1080p の動画、それと 50Hz(メニュー側)の参考。
+size frame
+pbdisplay 60
+pbclear 1
+echo 60Hz clear 1 hdz_9048.ts
+open hdz_9048.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 0
+echo 60Hz clear 0 hdz_9048.ts
+open hdz_9048.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 1
+echo 60Hz clear 1 hdz_9048.ts
+open hdz_9048.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 1
+echo 60Hz clear 1 /mnt/extsd/hd1080.ts
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 0
+echo 60Hz clear 0 /mnt/extsd/hd1080.ts
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 1
+echo 60Hz clear 1 /mnt/extsd/hd1080.ts
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 1
+echo 60Hz clear 1 hdz_9048.ts
+open hdz_9048.ts
+wait 20000
+exit
+wait 800
+pbdisplay 50
+pbclear 1
+echo 50Hz clear 1 hdz_9048.ts
+open hdz_9048.ts
+wait 8000
+exit
+wait 800
+pbdisplay 60
+pbclear 1
+echo key check
+open hdz_9048.ts
+wait 3000
+loop 10
+grabcount k720
+wait 200
+end
+exit
+wait 800
+open /mnt/extsd/hd1080.ts
+wait 3000
+loop 10
+grabcount k1080
+wait 200
+end
+exit

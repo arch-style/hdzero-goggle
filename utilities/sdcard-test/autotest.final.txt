@@ -1,0 +1,46 @@
+# 60Hz 再生の仕上げ版の確認（約 1 分半、写真は不要）。録画の大きさに合わせて 720/1080 行の
+# 60Hz に切り替わり、「透け」(粒) が出ないかを取り込みで数えます。
+#   1) 720p の録画 → 720 行   2) 1080p のテスト動画 → 1080 行に切り替え   3) 720p に戻る
+# 終わったら、いつもの再生メニューから録画を何本か再生して、目で確かめてください。
+size frame
+pbdisplay 60
+
+echo 720p recording
+open hdz_9048.ts
+wait 3000
+label A 720p playing
+loop 12
+grabcount a720
+wait 200
+end
+pause
+wait 400
+grab a720_paused
+exit
+wait 800
+
+echo 1080p clip
+open /mnt/extsd/hd1080.ts
+wait 3000
+label B 1080p playing
+loop 12
+grabcount b1080
+wait 200
+end
+pause
+wait 400
+grab b1080_paused
+exit
+wait 800
+
+echo back to 720p
+open hdz_9048.ts
+wait 1500
+label C 720p again
+play
+wait 8000
+pause
+wait 400
+grab c720_paused
+exit
+label

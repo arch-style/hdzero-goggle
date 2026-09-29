@@ -1,0 +1,90 @@
+# 1080p の書き換えを速くする方法の比較（約 3 分、写真は不要）。
+#   1: 画面全体をキャッシュから書き戻す(今)  2: 書き戻さない  3: 変えた行だけ書き戻す
+#   4: 3 を 2 つの CPU で分担
+size frame
+pbdisplay 60
+echo clear 1 /mnt/extsd/hd1080.ts
+pbclear 1
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+open /mnt/extsd/hd1080.ts
+wait 2500
+loop 6
+grabcount c1
+wait 200
+end
+exit
+wait 800
+echo clear 2 /mnt/extsd/hd1080.ts
+pbclear 2
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+open /mnt/extsd/hd1080.ts
+wait 2500
+loop 6
+grabcount c2
+wait 200
+end
+exit
+wait 800
+echo clear 3 /mnt/extsd/hd1080.ts
+pbclear 3
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+open /mnt/extsd/hd1080.ts
+wait 2500
+loop 6
+grabcount c3
+wait 200
+end
+exit
+wait 800
+echo clear 4 /mnt/extsd/hd1080.ts
+pbclear 4
+open /mnt/extsd/hd1080.ts
+wait 8000
+exit
+wait 800
+open /mnt/extsd/hd1080.ts
+wait 2500
+loop 6
+grabcount c4
+wait 200
+end
+exit
+wait 800
+echo clear 3 hdz_9048.ts
+pbclear 3
+open hdz_9048.ts
+wait 8000
+exit
+wait 800
+open hdz_9048.ts
+wait 2500
+loop 6
+grabcount c3
+wait 200
+end
+exit
+wait 800
+echo clear 4 hdz_9048.ts
+pbclear 4
+open hdz_9048.ts
+wait 8000
+exit
+wait 800
+open hdz_9048.ts
+wait 2500
+loop 6
+grabcount c4
+wait 200
+end
+exit
+wait 800
+pbclear 3

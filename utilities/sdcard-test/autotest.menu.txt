@@ -1,0 +1,17 @@
+# メニューへの戻りの確認と、1080p のコマ遅れ（約 40 秒、写真は不要）。
+# 終わるとメニューに戻ります。そのときの画面がずれていないか見てください。
+# そのあと、再生メニューから録画を再生して一覧に戻る操作も試してください。
+size frame
+pbdisplay 60
+open hdz_9048.ts
+wait 4000
+exit
+wait 800
+open /mnt/extsd/hd1080.ts
+wait 9000
+pause
+exit
+wait 800
+open hdz_9048.ts
+wait 4000
+exit

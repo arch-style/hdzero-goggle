@@ -117,16 +117,11 @@ void vdpo_timing_collect(void);
 // for the same timing collects it instead of running dispw itself.
 void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode);
 void Display_UI();
-// The player's display at 1080p60 (goggle 2 only; see hardware-goggle2.c),
-// and whether it is still up: any return to the menu's display ends it.
-void Display_Playback(void);
-void Display_Playback_720(void);
-bool Display_Playback_on(void);
-// The SoC's output format while it is up, being tried: 0 leaves it alone.
-void Display_Playback_color(int color);
-const char *Display_Playback_color_name(void);
-int Display_Playback_color_index(void);
-void Display_Playback_gamma(int mode);
+// The player's 60Hz display (goggle 2 only; see hardware-goggle2.c) at 720 or
+// 1080 lines, and which of them is up, 0 for neither: any return to the
+// menu's display ends it.
+void Display_Playback(int lines);
+int Display_Playback_lines(void);
 
 void Display_720P90(int mode);
 void Display_720P60_50(int mode, uint8_t is_43);

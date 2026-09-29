@@ -36,20 +36,17 @@
 //                        routing back the way the menu leaves it
 //   mixer                every ALSA mixer control and its value, one line each
 //   shell <command>      run it and put what it prints in the log
-//   pbdisplay 50|60|720  the display the player runs on, from the next open:
-//                        the menu's 1080p50, 1080p60 (the default), or the
-//                        live side at 720p60 (being tried)
-//   pbcolor <n>          the SoC's output format at 1080p60 (Display_Playback_color())
-//   pbcs <n>             the video layer's colour space, being tried (avplay_colorspace())
-//   pbscan <n>           the player's pass over each frame, being tried (avplay_scan())
-//   pbgamma <n>          the display's gamma table, being tried (Display_Playback_gamma())
+//   pbdisplay 50|60      the display the player runs on, from the next open:
+//                        the menu's 1080p50, or 60Hz at the recording's size
+//                        (the default)
+//   pbclear 0|1          for measuring: frames left as they are on the live side (0)
 //   fpga <reg> [value]   read an FPGA register, or write it and read it back;
 //                        "fpga dump" reads them all, "fpga restore" puts the
 //                        image controls back
 //   mem <addr> [words]   read SoC registers (32-bit words, from /dev/mem)
 //   label <text>         shown on the player's bar, to tell variants apart
 //   grab <name> [w h fps]  one frame of the DVR input, i.e. the screen after
-//                        the FPGA, to grab/<name>.nv21 (1920 1080 30); needs
+//                        the FPGA, to grab/<name>.nv21 (the whole screen); needs
 //                        a file open in the player. The input stays open until
 //                        grabstop, exit or open
 //   grabcount <name> [w h fps]  the same, only logging its pixels at 255 (where
@@ -399,12 +396,17 @@ static void at_mem(const char *a1, const char *a2) {
 
 // One frame of the DVR input into grab/<name>.nv21 on the card
 // (src/player/vigrab.h): what the goggle shows after the FPGA.
-// Without a size, the whole 1080p60 screen: the input gives 1920x1080 at
-// 30fps (at 60 it gives 1280x720, the top-left of it).
+// Without a size, the whole screen: at 1080 lines the input gives 1920x1080
+// when asked for 30fps (at 60 it gives 1280x720, the top-left of it).
 static void at_grab(const char *line, bool save) {
     char name[64] = "", path[128];
     int width = 1920, height = 1080, fps = 30;
 
+#if defined(HDZGOGGLE2)
+    if (Display_Playback_lines() == 720) {
+        width = 1280, height = 720, fps = 60;
+    }
+#endif
     if (sscanf(line, "%*s %63s %d %d %d", name, &width, &height, &fps) < 1) {
         LOGW("AT grab: no name");
         return;
@@ -556,17 +558,9 @@ static bool at_run(int i, char *line) {
     } else if (strcmp(op, "shell") == 0) {
         at_shell(line);
     } else if (strcmp(op, "pbdisplay") == 0) {
-        at_under_lock(mplayer_set_display60, atoi(a1) == 50 ? 0 : atoi(a1));
-    } else if (strcmp(op, "pbcolor") == 0) {
-        at_under_lock(mplayer_set_display_color, atoi(a1));
-    } else if (strcmp(op, "pbcs") == 0) {
-        avplay_set_colorspace(atoi(a1));
-    } else if (strcmp(op, "pbscan") == 0) {
-        avplay_set_scan(atoi(a1));
-    } else if (strcmp(op, "pbgamma") == 0) {
-#if defined(HDZGOGGLE2)
-        Display_Playback_gamma(atoi(a1));
-#endif
+        at_under_lock(mplayer_set_display60, atoi(a1) == 60);
+    } else if (strcmp(op, "pbclear") == 0) {
+        avplay_set_clear(atoi(a1) != 0);
     } else if (strcmp(op, "fpga") == 0) {
         at_fpga(a1, a2);
     } else if (strcmp(op, "mem") == 0) {

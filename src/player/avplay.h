@@ -55,13 +55,19 @@ bool avplay_step(AvPlay_t *ap, bool forward);
 // was.
 bool avplay_seek(AvPlay_t *ap, int ms);
 
-// Being tried, for the goggle 2's live-side display: the size of the screen
-// the picture fills, from the next avplay_open() (1920x1080), and a pass over
-// each frame's luma before it goes out (see avplay_scan()); 0 is none.
-void avplay_set_screen(int width, int height);
-void avplay_set_scan(int mode);
-// The colour space the video layer is declared in (avplay_colorspace()).
-void avplay_set_colorspace(int mode);
+// The size of the recording's frames, as decoded.
+void avplay_video_size(AvPlay_t *ap, int *width, int *height);
+
+// The screen the picture fills, from the next avplay_open() (1920x1080), and
+// whether it is the goggle 2's live side: there every frame is kept off the
+// live OSD's transparent grey and the video layer is declared in the
+// output's colour space (see avplay.c).
+void avplay_set_output(int width, int height, bool live);
+// The UI layer back to the whole screen, once the menu's display is up again
+// after a screen smaller than 1920x1080.
+void avplay_restore_ui(void);
+// For measuring: false leaves the frames as they are on the live side.
+void avplay_set_clear(bool on);
 
 #ifdef __cplusplus
 }

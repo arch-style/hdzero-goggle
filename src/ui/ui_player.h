@@ -73,10 +73,8 @@ bool mplayer_is_resuming(void);
 int mplayer_position_ms(void);
 void mplayer_set_step_size(int index); // pb_step_t
 void mplayer_set_speed(int index);     // pb_speed_t
-// 1 for the player's 1080p60 (the default), 0 for the menu's 1080p50.
-void mplayer_set_display60(int on); // 720: the live side at 720p60, being tried
-// The SoC's output format at 1080p60, being tried (Display_Playback_color()).
-void mplayer_set_display_color(int color);
+// 1 for the player's 60Hz display (the default), 0 for the menu's 1080p50.
+void mplayer_set_display60(int on);
 // Shown on the bar in place of the display's name; "" for none.
 void mplayer_set_label(const char *text);
 bool mplayer_tune_set(const char *name, int value);

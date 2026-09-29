@@ -16,9 +16,10 @@ void avplay_play(AvPlay_t *ap, int divider) {}
 void avplay_pause(AvPlay_t *ap) {}
 bool avplay_step(AvPlay_t *ap, bool forward) { return false; }
 bool avplay_seek(AvPlay_t *ap, int ms) { return false; }
-void avplay_set_screen(int width, int height) {}
-void avplay_set_scan(int mode) {}
-void avplay_set_colorspace(int mode) {}
+void avplay_set_output(int width, int height, bool live) {}
+void avplay_restore_ui(void) {}
+void avplay_set_clear(bool on) {}
+void avplay_video_size(AvPlay_t *ap, int *width, int *height) { *width = *height = 0; }
 
 const char *vosend_mode_name(int mode) { return "?"; }
 int vosend_mode_parse(const char *name) { return -1; }

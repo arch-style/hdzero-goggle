@@ -74,17 +74,15 @@ static bool pb_seek_pending = false;
 #define PB_TICK_MS 100
 static lv_timer_t *pb_tick_timer = NULL;
 
-// The player runs the display at 1080p60, so that 60fps recordings are shown
-// frame for frame; the menu's 1080p50 shows them 6:5 (Display_Playback()).
-// Switching costs dispw's second each way, so it is done at the first file
-// and undone when the Playback page is left, not per file.
+// On the goggle 2 the player runs the display at 60Hz, so that 60fps
+// recordings are shown frame for frame; the menu's 1080p50 shows them 6:5
+// (Display_Playback()). It runs at the recording's own size, 720 or 1080
+// lines, which the player cannot know before a frame is decoded: a file opens
+// on the size the last one had, and is opened again if it has the other.
+// Switching costs dispw's second, so it is done then and when the Playback
+// page is left, not per file.
 static bool pb_display60 = true;
-// Being tried: the live side at 720p60 in place of 1080p60, and which of the
-// two is up.
-static bool pb_display720 = false;
-static bool pb_display720_up = false;
-// Set by an autotest that compares displays: the bar says which is up.
-static bool pb_display_label = false;
+static int pb_lines = 720;
 // Set by an autotest that tries variants: which one is up, in its words.
 static char pb_label[48] = "";
 
@@ -153,18 +151,6 @@ static void update_mode_label() {
         snprintf(s, sizeof(s), "Step %s   Speed %s   [%s]", pb_steps[pb_step].name,
                  pb_speeds[pb_speed].name, pb_label);
     } else
-#if defined(HDZGOGGLE2)
-    if (pb_display_label) {
-        if (pb_display60) {
-            snprintf(s, sizeof(s), "Step %s   Speed %s   [60Hz %d %s]", pb_steps[pb_step].name,
-                     pb_speeds[pb_speed].name, Display_Playback_color_index(),
-                     Display_Playback_color_name());
-        } else {
-            snprintf(s, sizeof(s), "Step %s   Speed %s   [50Hz menu]", pb_steps[pb_step].name,
-                     pb_speeds[pb_speed].name);
-        }
-    } else
-#endif
         snprintf(s, sizeof(s), "Step %s   Speed %s", pb_steps[pb_step].name, pb_speeds[pb_speed].name);
     lv_label_set_text(controller._mode, s);
 }
@@ -500,22 +486,46 @@ void load_stars(char *fname) {
 // interface func
 static void pb_display_enter(void) {
 #if defined(HDZGOGGLE2)
-    if (pb_display60 && (!Display_Playback_on() || pb_display720_up != pb_display720)) {
-        if (pb_display720) {
-            Display_Playback_720();
-        } else {
-            Display_Playback();
+    if (pb_display60) {
+        if (Display_Playback_lines() != pb_lines) {
+            Display_Playback(pb_lines);
         }
-        pb_display720_up = pb_display720;
+        avplay_set_output(pb_lines == 720 ? 1280 : 1920, pb_lines, true);
+    } else {
+        avplay_set_output(1920, 1080, false);
     }
-    avplay_set_screen(pb_display60 && pb_display720 ? 1280 : 1920, pb_display60 && pb_display720 ? 720 : 1080);
+#endif
+}
+
+// A recording of the other size than the display was set up for: the display
+// takes its size and the file is opened again.
+static void pb_display_fit(const char *fname) {
+#if defined(HDZGOGGLE2)
+    int width, height;
+
+    if (!pb_display60 || !pb_ap) {
+        return;
+    }
+    avplay_video_size(pb_ap, &width, &height);
+    const int lines = height > 720 ? 1080 : 720;
+    if (lines == pb_lines) {
+        return;
+    }
+    LOGI("%dx%d: the display to %d lines", width, height, lines);
+    avplay_close(pb_ap);
+    pb_lines = lines;
+    pb_display_enter();
+    pb_ap = avplay_open(fname);
+#else
+    (void)fname;
 #endif
 }
 
 void mplayer_release_display(void) {
 #if defined(HDZGOGGLE2)
-    if (Display_Playback_on()) {
+    if (Display_Playback_lines()) {
         Display_UI();
+        avplay_restore_ui();
     }
 #endif
 }
@@ -527,6 +537,7 @@ void mplayer_file(char *fname) {
     init_mplayer();
 
     pb_ap = avplay_open(fname);
+    pb_display_fit(fname);
     if (pb_ap) {
         controller.range = avplay_duration_ms(pb_ap);
         controller.value = avplay_position_ms(pb_ap);
@@ -614,22 +625,8 @@ void mplayer_set_step_size(int index) {
 
 void mplayer_set_display60(int on) {
     pb_display60 = on != 0;
-    pb_display720 = on == 720;
-    pb_display_label = true;
     if (!pb_display60) {
         mplayer_release_display();
-    }
-}
-
-void mplayer_set_display_color(int color) {
-    pb_display_label = true;
-#if defined(HDZGOGGLE2)
-    Display_Playback_color(color);
-#else
-    (void)color;
-#endif
-    if (controller.enable) {
-        update_mplayer();
     }
 }
 
