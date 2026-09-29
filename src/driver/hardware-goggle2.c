@@ -431,7 +431,64 @@ void pclk_phase_init() {
     pclk_phase_dump();
 }
 
+// The clock phases above are for the FPGA that 9.6 ships (VA 198). Running
+// from the SD card never flashes it, so a goggle on 9.5.1 keeps its older
+// FPGA (VA 176 on the one tested), where HDMI in needs 9.5.1's settings: with
+// these it showed no picture from a Mac that stock showed fine. AV (both
+// analog inputs) showed its picture but none of the goggle's OSD over it, and
+// the OSD layer is the SoC's output clocked into the FPGA, which is exactly
+// what these settings are about, so it goes back to 9.5.1's too. HDZero works
+// on the old FPGA as it is and is left alone.
+#define FPGA_VA_NEW_CLOCKS 198
+
+static bool fpga_old_clocks(void) {
+    static int old = -1;
+
+    if (old < 0) {
+        int va = I2C_Read(ADDR_FPGA, 0xff);
+
+        old = va < FPGA_VA_NEW_CLOCKS;
+        LOGI("fpga: va %d, %s HDMI in and AV clock phases", va, old ? "9.5.1" : "9.6");
+    }
+    return old;
+}
+
+static bool is_hdmi_in_source(video_source_t source) {
+    return source >= VIDEO_SOURCE_HDMI_IN_1080P50 && source <= VIDEO_SOURCE_HDMI_IN_720P100;
+}
+
+static bool is_old_clock_source(video_source_t source) {
+    return (is_hdmi_in_source(source) || source == VIDEO_SOURCE_AV_IN) && fpga_old_clocks();
+}
+
+// 9.5.1's FPGA 0x8d for HDMI in (its 0x8e is 0x04 for all of them).
+static uint8_t old_hdmi_in_8d(video_source_t source) {
+    return (source == VIDEO_SOURCE_HDMI_IN_720P50 || source == VIDEO_SOURCE_HDMI_IN_720P60) ? 0x00 : 0x10;
+}
+
+// 9.6 never writes 0x8d, so the old-FPGA paths put back what they found
+// when any other source takes over, leaving those exactly as they were.
+static int fpga_8d_saved = -1;
+
 void vclk_phase_set(video_source_t source, uint8_t reg_8d_sel) {
+    if (is_old_clock_source(source)) {
+        if (fpga_8d_saved < 0)
+            fpga_8d_saved = I2C_Read(ADDR_FPGA, 0x8d);
+        if (source == VIDEO_SOURCE_AV_IN) {
+            // 9.5.1: 0x10840000, 0x8d 0x10 and 0x8e 0x84.
+            I2C_Write(ADDR_FPGA, 0x8d, 0x10 ^ (reg_8d_sel ? 0x10 : 0x00));
+            I2C_Write(ADDR_FPGA, 0x8e, 0x84);
+        } else {
+            I2C_Write(ADDR_FPGA, 0x8d, old_hdmi_in_8d(source) ^ (reg_8d_sel ? 0x10 : 0x00));
+            I2C_Write(ADDR_FPGA, 0x8e, 0x04);
+        }
+        return;
+    }
+
+    if (fpga_8d_saved >= 0) {
+        I2C_Write(ADDR_FPGA, 0x8d, fpga_8d_saved);
+        fpga_8d_saved = -1;
+    }
     I2C_Write(ADDR_FPGA, 0x8e, (vclk_phase[source] >> 16) & 0xff);
 }
 
@@ -483,12 +540,18 @@ void csic_pclk_invert_set(uint8_t is_invert) {
 }
 
 void pclk_phase_set(video_source_t source) {
+    const bool old_hdmi_in = is_hdmi_in_source(source) && fpga_old_clocks();
+    const bool old_av = source == VIDEO_SOURCE_AV_IN && fpga_old_clocks();
+
     LOGI("video_source:%d", source);
-    LOGI("pclk_phase_set %d", pclk_phase[source]);
+    LOGI("pclk_phase_set %d%s", pclk_phase[source],
+         old_hdmi_in ? " (9.5.1 HDMI in)" : old_av ? " (9.5.1 AV)" : "");
     // bit[0] hdmi in
     // IT66021_Set_Pclk((pclk_phase[source] >> 0) & 1, 0);
     IT66021_Mask_WR(0, 0x0f, 0x03, 0x00);
-    if ((pclk_phase[source] >> 0) & 1)
+    if (old_hdmi_in)
+        IT66021_Mask_WR(0, 0x50, 0x1f, 0x12); // as IT66021_init() leaves it, which 9.5.1 never changed
+    else if ((pclk_phase[source] >> 0) & 1)
         I2C_L_Write(ADDR_IT66021, 0x50, 0xb3);
     else
         I2C_L_Write(ADDR_IT66021, 0x50, 0xa1);
@@ -496,8 +559,9 @@ void pclk_phase_set(video_source_t source) {
     // bit[1] analog in
     TP2825_Set_Pclk((pclk_phase[source] >> 1) & 1);
 
-    // bit[2] osd
-    vdpo_sync_ctrl_set((pclk_phase[source] >> 2) & 1, 0, 0);
+    // bit[2] osd (9.5.1 set it for every source on goggle 2, and for AV with
+    // the clock delay on as well)
+    vdpo_sync_ctrl_set(old_hdmi_in || old_av || ((pclk_phase[source] >> 2) & 1), old_av, 0);
 
     // bit[3] dvr
     csic_pclk_invert_set((pclk_phase[source] >> 3) & 1);
@@ -1188,6 +1252,10 @@ void AV_Mode_Switch_fpga(int is_pal) {
     }
     I2C_Write(ADDR_FPGA, 0x06, 0x0F);
     system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    // 9.5.1 ended here with the OSD clock as AV has it, which an NTSC/PAL
+    // change (AV_Mode_Switch(), with no pclk_phase_set() after it) relies on.
+    if (fpga_old_clocks())
+        vdpo_sync_ctrl_set(true, true, 0);
 }
 
 void AV_Mode_Switch(int is_pal) {
