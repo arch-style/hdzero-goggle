@@ -52,6 +52,7 @@ extern "C" {
 #define UI_MPLAYER_SLD_WIDTH              400
 #define UI_MPLAYER_SLD_HEIGHT             3
 #define UI_PLAYER_TEXT_FONT               &lv_font_montserrat_26
+#define UI_MPLAYER_MENU_WIDTH             240 // the right button's menu, over the bar
 #define UI_AUTOSCAN_COLS                  160, 150, 180, 220, 180, 160, LV_GRID_TEMPLATE_LAST
 #define UI_AUTOSCAN_ROWS                  60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_SCANNOW_SCANNER_COLS           500, 20, 1164 - 520, LV_GRID_TEMPLATE_LAST
@@ -196,6 +197,7 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_MPLAYER_SLD_WIDTH              260
 #define UI_MPLAYER_SLD_HEIGHT             2
 #define UI_PLAYER_TEXT_FONT               &lv_font_montserrat_14
+#define UI_MPLAYER_MENU_WIDTH             140 // the right button's menu, over the bar
 #define UI_AUTOSCAN_COLS                  106, 100, 120, 146, 120, 106, LV_GRID_TEMPLATE_LAST
 #define UI_AUTOSCAN_ROWS                  40, 40, 40, 40, 40, 40, 40, 40, 40, 40, LV_GRID_TEMPLATE_LAST
 #define UI_SCANNOW_SCANNER_COLS           320, 12, 420, LV_GRID_TEMPLATE_LAST

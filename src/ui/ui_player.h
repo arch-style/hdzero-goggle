@@ -53,6 +53,12 @@ typedef struct {
     bool enable;
     lv_obj_t *bg;
     lv_obj_t *bar;
+
+    // The right button's menu: a title and one row per choice, as many as
+    // the longer list has.
+    lv_obj_t *menu;
+    lv_obj_t *_menu_title;
+    lv_obj_t *_menu_rows[PB_STEP_COUNT];
 } player_control_t;
 
 uint8_t mplayer_on_key(uint8_t key);

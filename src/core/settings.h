@@ -127,6 +127,13 @@ typedef struct {
     setting_record_naming_t naming;
 } setting_record_t;
 
+// The player's step size and play speed (pb_step_t and pb_speed_t in
+// ui/ui_player.h), as last picked from its menu.
+typedef struct {
+    uint8_t step;
+    uint8_t speed;
+} setting_playback_t;
+
 typedef struct {
     uint8_t oled;
     uint8_t brightness;
@@ -521,6 +528,7 @@ typedef struct {
     setting_power_t power;
     setting_sources_t source;
     setting_record_t record;
+    setting_playback_t playback;
     setting_image_t image;
     setting_head_tracker_t ht;
     setting_elrs_t elrs;

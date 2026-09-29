@@ -8,14 +8,17 @@
 
 #include <log/log.h>
 #include <lvgl/lvgl.h>
+#include <minIni.h>
 
 #include "../conf/ui.h"
 #include "common.hh"
 #include "core/app_state.h"
 #include "core/dvr.h"
+#include "core/settings.h"
 #include "driver/hardware.h"
 #include "player/avplay.h"
 #include "record/record_definitions.h"
+#include "ui/page_common.h"
 #include "ui/ui_porting.h"
 #include "ui/ui_style.h"
 
@@ -35,9 +38,10 @@ LV_IMG_DECLARE(img_star);
 // all land on the frame, and the picture keeps time with the sound.
 static AvPlay_t *pb_ap = NULL;
 
-// Step size and play speed. Both survive the file being closed: picking them
-// again for every clip is the kind of thing that makes a feature not worth
-// having.
+// Step size and play speed. Both survive the file being closed and, when
+// picked from the menu, the goggle being switched off (setting.ini's
+// [playback]): picking them again for every clip is the kind of thing that
+// makes a feature not worth having.
 static const struct {
     const char *name;
     uint32_t ms; // 0 = one frame of the open file
@@ -61,6 +65,51 @@ static const struct {
 
 static uint8_t pb_step = PB_STEP_5S;
 static uint8_t pb_speed = PB_SPEED_1_1;
+
+// Both are picked from the right button's menu. It asks for the step size,
+// then the play speed, then goes: the dial moves the cursor and a click takes
+// the choice, so the dial is only borrowed while the menu is up, and the
+// right button closes it whenever. Each list opens on what it has now.
+typedef enum {
+    PB_MENU_CLOSED = 0,
+    PB_MENU_STEP,
+    PB_MENU_SPEED,
+} pb_menu_t;
+
+_Static_assert(PB_SPEED_COUNT <= PB_STEP_COUNT, "the menu has a row for each step size");
+
+static pb_menu_t pb_menu = PB_MENU_CLOSED;
+static uint8_t pb_menu_cursor = 0;
+
+// The saved pair, taken once, before the player first needs them. Anything
+// out of range (an older or hand-edited setting.ini) keeps the default.
+static void pb_settings_load(void) {
+    static bool loaded = false;
+
+    if (loaded) {
+        return;
+    }
+    loaded = true;
+    if (g_setting.playback.step < PB_STEP_COUNT) {
+        pb_step = g_setting.playback.step;
+    }
+    if (g_setting.playback.speed < PB_SPEED_COUNT) {
+        pb_speed = g_setting.playback.speed;
+    }
+}
+
+// Only what is picked from the menu is written: an autotest's "size" and
+// "speed" leave setting.ini as the user had it.
+static void pb_settings_save(void) {
+    if (g_setting.playback.step != pb_step) {
+        g_setting.playback.step = pb_step;
+        ini_putl("playback", "step", pb_step, SETTING_INI);
+    }
+    if (g_setting.playback.speed != pb_speed) {
+        g_setting.playback.speed = pb_speed;
+        ini_putl("playback", "speed", pb_speed, SETTING_INI);
+    }
+}
 
 // Dialling is collected into one seek. The dial sends its clicks in bursts,
 // and each seek decodes from a keyframe, so the target moves with every click
@@ -155,14 +204,53 @@ static void update_mode_label() {
     lv_label_set_text(controller._mode, s);
 }
 
+static uint8_t pb_menu_count(void) {
+    return pb_menu == PB_MENU_STEP ? PB_STEP_COUNT : PB_SPEED_COUNT;
+}
+
+static const char *pb_menu_name(uint8_t i) {
+    return pb_menu == PB_MENU_STEP ? pb_steps[i].name : pb_speeds[i].name;
+}
+
+static void update_menu(void) {
+    if (pb_menu == PB_MENU_CLOSED) {
+        lv_obj_add_flag(controller.menu, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    const uint8_t count = pb_menu_count();
+    const lv_coord_t row_h = lv_font_get_line_height(UI_PLAYER_TEXT_FONT) + 8;
+
+    lv_label_set_text(controller._menu_title, pb_menu == PB_MENU_STEP ? "Step  1/2" : "Speed  2/2");
+    for (uint8_t i = 0; i < PB_STEP_COUNT; i++) {
+        lv_obj_t *row = controller._menu_rows[i];
+        if (i >= count) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(row, pb_menu_name(i));
+        const bool at = i == pb_menu_cursor;
+        lv_obj_set_style_bg_opa(row, at ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_text_color(row, at ? lv_color_white() : lv_color_hex(0xC0C0C0), 0);
+    }
+
+    // The title and the rows, then the panel sat on the bar's top right.
+    lv_obj_set_height(controller.menu, row_h * (count + 1) + 16);
+    lv_obj_align_to(controller.menu, controller.bar, LV_ALIGN_OUT_TOP_RIGHT, 0, -8);
+    lv_obj_clear_flag(controller.menu, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void update_mplayer() {
     if (!controller.enable) {
         lv_obj_add_flag(controller.bg, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(controller.menu, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_img_set_src(controller._btn, controller.is_playing ? &img_Stop_0 : &img_Play_0);
         update_mode_label();
         update_time_label(pb_ap != NULL);
+        update_menu();
     }
 }
 
@@ -215,6 +303,35 @@ static void mplayer_create_slider(lv_obj_t *parent, int16_t x, int16_t y) {
     }
 }
 
+static void mplayer_create_menu(void) {
+    const lv_coord_t row_h = lv_font_get_line_height(UI_PLAYER_TEXT_FONT) + 8;
+
+    controller.menu = lv_obj_create(lv_scr_act());
+    lv_obj_clear_flag(controller.menu, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(controller.menu, UI_MPLAYER_MENU_WIDTH, row_h);
+    lv_obj_set_style_pad_all(controller.menu, 8, 0);
+    lv_obj_add_style(controller.menu, &style_bar, 0);
+
+    controller._menu_title = lv_label_create(controller.menu);
+    lv_obj_set_style_text_font(controller._menu_title, UI_PLAYER_TEXT_FONT, 0);
+    lv_obj_set_style_text_color(controller._menu_title, lv_color_hex(0x808080), 0);
+    lv_obj_set_pos(controller._menu_title, 8, 4);
+
+    for (uint8_t i = 0; i < PB_STEP_COUNT; i++) {
+        lv_obj_t *row = lv_label_create(controller.menu);
+        lv_obj_set_style_text_font(row, UI_PLAYER_TEXT_FONT, 0);
+        lv_obj_set_style_bg_color(row, lv_color_make(0x00, 0x60, 0xC0), 0);
+        lv_obj_set_style_pad_left(row, 8, 0);
+        lv_obj_set_style_pad_top(row, 4, 0);
+        lv_obj_set_pos(row, 0, row_h * (i + 1));
+        lv_obj_set_size(row, lv_pct(100), row_h);
+        controller._menu_rows[i] = row;
+    }
+
+    pb_menu = PB_MENU_CLOSED;
+    lv_obj_add_flag(controller.menu, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void init_mplayer() {
     int16_t x, y;
 
@@ -228,6 +345,8 @@ static void init_mplayer() {
     // so the visible area is that much smaller than the driver's resolution.
     const lv_coord_t scr_w = lv_disp_get_hor_res(NULL) - DISP_OVERSCAN;
     const lv_coord_t scr_h = lv_disp_get_ver_res(NULL) - DISP_OVERSCAN;
+
+    pb_settings_load();
 
     // Background
     controller.bg = lv_obj_create(lv_scr_act());
@@ -269,6 +388,8 @@ static void init_mplayer() {
     lv_style_set_border_width(&style_bar, 0);
     lv_obj_add_style(controller.bar, &style_bar, 0);
 
+    mplayer_create_menu();
+
     controller.enable = true;
     controller.is_playing = true;
     controller.value = controller.range = 0;
@@ -284,7 +405,9 @@ static void free_mplayer() {
         lv_obj_del(controller._stars[i]);
     }
     lv_obj_del(controller.bar);
+    lv_obj_del(controller.menu); // its title and rows with it
     lv_obj_del(controller.bg);
+    pb_menu = PB_MENU_CLOSED;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -403,6 +526,60 @@ static void pb_tick_cb(lv_timer_t *timer) {
     update_time_label(true);
 }
 
+static void pb_menu_open(pb_menu_t menu) {
+    pb_menu = menu;
+    pb_menu_cursor = menu == PB_MENU_STEP ? pb_step : pb_speed;
+}
+
+// The right button opens and closes the menu; while it is up, it has the
+// dial's turns and click. A long press still leaves the player.
+static bool pb_menu_key(uint8_t key) {
+    if (key == RIGHT_KEY_CLICK || key == RIGHT_KEY_PRESS) {
+        if (pb_menu == PB_MENU_CLOSED) {
+            pb_menu_open(PB_MENU_STEP);
+        } else {
+            pb_menu = PB_MENU_CLOSED; // what is under the cursor is not taken
+        }
+        return true;
+    }
+
+    if (pb_menu == PB_MENU_CLOSED) {
+        return false;
+    }
+
+    const uint8_t count = pb_menu_count();
+
+    switch (key) {
+    case DIAL_KEY_UP: // down the list, as in the file list
+        pb_menu_cursor = (pb_menu_cursor + 1) % count;
+        return true;
+
+    case DIAL_KEY_DOWN:
+        pb_menu_cursor = (pb_menu_cursor + count - 1) % count;
+        return true;
+
+    case DIAL_KEY_CLICK:
+        if (pb_menu == PB_MENU_STEP) {
+            pb_step = pb_menu_cursor;
+            LOGI("menu: step %s", pb_steps[pb_step].name);
+            pb_settings_save();
+            pb_menu_open(PB_MENU_SPEED);
+        } else {
+            LOGI("menu: speed %s", pb_speeds[pb_menu_cursor].name);
+            if (pb_menu_cursor != pb_speed) {
+                pb_speed = pb_menu_cursor;
+                if (controller.is_playing)
+                    pb_play(); // the new speed, with or without the sound
+            }
+            pb_settings_save();
+            pb_menu = PB_MENU_CLOSED;
+        }
+        return true;
+    }
+
+    return false;
+}
+
 uint8_t mplayer_on_key(uint8_t key) {
     if (!controller.enable)
         return 0;
@@ -414,6 +591,11 @@ uint8_t mplayer_on_key(uint8_t key) {
 
     if (!pb_ap && key != DIAL_KEY_PRESS)
         return 0; // a file that would not open: only leaving makes sense
+
+    if (pb_menu_key(key)) {
+        update_mplayer();
+        return 0;
+    }
 
     switch (key) {
     case DIAL_KEY_PRESS:
@@ -439,18 +621,6 @@ uint8_t mplayer_on_key(uint8_t key) {
             pb_frame_step(false);
         else
             pb_seek_by(-(int32_t)pb_steps[pb_step].ms);
-        break;
-
-    // The dial is taken (click plays, long press leaves), so the function
-    // button carries the two new settings.
-    case RIGHT_KEY_CLICK:
-        pb_step = (pb_step + 1) % PB_STEP_COUNT;
-        break;
-
-    case RIGHT_KEY_PRESS:
-        pb_speed = (pb_speed + 1) % PB_SPEED_COUNT;
-        if (controller.is_playing)
-            pb_play(); // the new speed, with or without the sound
         break;
     }
 
@@ -615,6 +785,7 @@ int mplayer_position_ms(void) {
 // next one. update_mplayer() touches the bar's objects, which only exist
 // while a file is open (the first autotest crashed on exactly that).
 void mplayer_set_step_size(int index) {
+    pb_settings_load(); // or it would undo this at the next open
     if (index >= 0 && index < PB_STEP_COUNT) {
         pb_step = (uint8_t)index;
         if (controller.enable) {
@@ -638,6 +809,7 @@ void mplayer_set_label(const char *text) {
 }
 
 void mplayer_set_speed(int index) {
+    pb_settings_load();
     if (index >= 0 && index < PB_SPEED_COUNT) {
         pb_speed = (uint8_t)index;
         if (controller.enable) {

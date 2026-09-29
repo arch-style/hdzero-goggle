@@ -85,6 +85,10 @@ const setting_t g_setting_defaults = {
         .audio_source = SETTING_RECORD_AUDIO_SOURCE_MIC,
         .naming = SETTING_NAMING_CONTIGUOUS,
     },
+    .playback = {
+        .step = 2,  // PB_STEP_5S
+        .speed = 0, // PB_SPEED_1_1
+    },
     .image = {
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
         .oled = 8,
@@ -644,6 +648,10 @@ void settings_load(void) {
     g_setting.record.audio = settings_get_bool("record", "audio", g_setting_defaults.record.audio);
     g_setting.record.audio_source = ini_getl("record", "audio_source", g_setting_defaults.record.audio_source, SETTING_INI);
     g_setting.record.naming = ini_getl("record", "naming", g_setting_defaults.record.naming, SETTING_INI);
+
+    // playback
+    g_setting.playback.step = ini_getl("playback", "step", g_setting_defaults.playback.step, SETTING_INI);
+    g_setting.playback.speed = ini_getl("playback", "speed", g_setting_defaults.playback.speed, SETTING_INI);
 
     // image
     g_setting.image.oled = ini_getl("image", "oled", g_setting_defaults.image.oled, SETTING_INI);
