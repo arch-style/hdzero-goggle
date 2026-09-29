@@ -1,0 +1,139 @@
+# 写真は不要です（約 3 分）。720p60 で、再生する映像の「色の規格」の宣言を変えて、
+# ゴーグル内の色変換で明るさがずれなくなるかを取り込みで調べます。
+#   pbcs 0: 今のまま (BT.601 と宣言)  1: BT.709  2: BT.601  3: BT.709 フル  4: BT.601 フル
+# そのあと BT.709 で、書き換え (3: 124-126 を一律, 9: 予測) の透けとコマ遅れを測ります。
+# 途中で色が少し変わる画面がありますが、正常です。
+size frame
+pbdisplay 720
+pbscan 0
+label CS0 colour space 0
+pbcs 0
+open hdz_9048.ts
+wait 1000
+pause
+wait 300
+grab f_cs0 1280 720 60
+exit
+wait 600
+open /mnt/extsd/colors.ts
+wait 800
+pause
+wait 300
+grab c_cs0 1280 720 60
+exit
+wait 600
+label CS1 colour space 1
+pbcs 1
+open hdz_9048.ts
+wait 1000
+pause
+wait 300
+grab f_cs1 1280 720 60
+exit
+wait 600
+open /mnt/extsd/colors.ts
+wait 800
+pause
+wait 300
+grab c_cs1 1280 720 60
+exit
+wait 600
+label CS2 colour space 2
+pbcs 2
+open hdz_9048.ts
+wait 1000
+pause
+wait 300
+grab f_cs2 1280 720 60
+exit
+wait 600
+open /mnt/extsd/colors.ts
+wait 800
+pause
+wait 300
+grab c_cs2 1280 720 60
+exit
+wait 600
+label CS3 colour space 3
+pbcs 3
+open hdz_9048.ts
+wait 1000
+pause
+wait 300
+grab f_cs3 1280 720 60
+exit
+wait 600
+open /mnt/extsd/colors.ts
+wait 800
+pause
+wait 300
+grab c_cs3 1280 720 60
+exit
+wait 600
+label CS4 colour space 4
+pbcs 4
+open hdz_9048.ts
+wait 1000
+pause
+wait 300
+grab f_cs4 1280 720 60
+exit
+wait 600
+open /mnt/extsd/colors.ts
+wait 800
+pause
+wait 300
+grab c_cs4 1280 720 60
+exit
+wait 600
+echo playing with BT.709
+pbcs 1
+open hdz_9048.ts
+wait 1500
+label P0 bt709 scan 0
+pbscan 0
+wait 1100
+loop 40
+grabcount p709_s0 1280 720 60
+wait 150
+end
+label P3 bt709 scan 3
+pbscan 3
+wait 1100
+loop 40
+grabcount p709_s3 1280 720 60
+wait 150
+end
+label P9 bt709 scan 9
+pbscan 9
+wait 1100
+loop 40
+grabcount p709_s9 1280 720 60
+wait 150
+end
+pause
+wait 300
+label L3 bt709 scan 3 timing
+pbscan 3
+play
+wait 8000
+pause
+wait 300
+label L9 bt709 scan 9 timing
+pbscan 9
+play
+wait 8000
+pause
+wait 300
+label L0 bt709 scan 0 timing
+pbscan 0
+play
+wait 8000
+pause
+wait 300
+exit
+wait 600
+pbscan 0
+pbcs 0
+pbdisplay 60
+label

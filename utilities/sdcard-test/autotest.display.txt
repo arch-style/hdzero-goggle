@@ -1,0 +1,109 @@
+# 再生画面を 60Hz にする方法を 6 通り、1 回の起動で順に試す（イヤホン不要、約 2 分）。
+# どれを表示しているかは、画面下のバーの 2 行目の [番号 名前] で分かる。
+# 各回: motion.ts（白い縦棒が 1 コマ 8px で流れる 60fps）を 5 秒 → 止めて 1.5 秒 →
+#       コマ送り 3 → 再開して 3 秒 → 抜ける
+#   0 ui 1080p50       今の表示（基準: 棒は周期的に跳ねるはず）
+#   1 live 720p60      FPGA をライブ映像の側にして、ライブ 720p60 と同じ設定。再生は OSD として重なる
+#   2 live 1080p60     同じくライブ側、1080p30 カメラの時と同じ設定（SoC は 1080p60 を出す）
+#   3 ui 1080p60       メニュー側のまま 1080p60（以前は斜めに裂けた）
+#   4 ui 1080p60 cam   3 に 1080p30 カメラのクロック位相と FPGA の値・形を足す
+#   5 ui 720p60 geom   メニュー側の 720p60 に FPGA の形（ライブ 720p60 用）を足す
+# 最後に 0 に戻して録画を 1 本。FPGA の値は "Display_Playback N done" 行、表示エンジンは "AT shell" 行。
+size frame
+stepgap 300
+
+echo 0 ui 1080p50（今）
+pbdisplay 0
+open /mnt/extsd/motion.ts
+wait 2500
+shell cat /sys/class/disp/disp/attr/sys
+wait 2500
+pause
+wait 1500
+step +3
+play
+waitresume 5000
+wait 3000
+exit
+wait 2000
+
+echo 1 live 720p60
+pbdisplay 1
+open /mnt/extsd/motion.ts
+wait 2500
+shell cat /sys/class/disp/disp/attr/sys
+wait 2500
+pause
+wait 1500
+step +3
+play
+waitresume 5000
+wait 3000
+exit
+wait 2000
+
+echo 2 live 1080p60
+pbdisplay 2
+open /mnt/extsd/motion.ts
+wait 2500
+shell cat /sys/class/disp/disp/attr/sys
+wait 2500
+pause
+wait 1500
+step +3
+play
+waitresume 5000
+wait 3000
+exit
+wait 2000
+
+echo 3 ui 1080p60
+pbdisplay 3
+open /mnt/extsd/motion.ts
+wait 2500
+shell cat /sys/class/disp/disp/attr/sys
+wait 2500
+pause
+wait 1500
+step +3
+play
+waitresume 5000
+wait 3000
+exit
+wait 2000
+
+echo 4 ui 1080p60 cam
+pbdisplay 4
+open /mnt/extsd/motion.ts
+wait 2500
+shell cat /sys/class/disp/disp/attr/sys
+wait 2500
+pause
+wait 1500
+step +3
+play
+waitresume 5000
+wait 3000
+exit
+wait 2000
+
+echo 5 ui 720p60 geom
+pbdisplay 5
+open /mnt/extsd/motion.ts
+wait 2500
+shell cat /sys/class/disp/disp/attr/sys
+wait 2500
+pause
+wait 1500
+step +3
+play
+waitresume 5000
+wait 3000
+exit
+wait 2000
+
+echo back to 0
+pbdisplay 0
+open hdz_0018.ts
+wait 4000
+exit

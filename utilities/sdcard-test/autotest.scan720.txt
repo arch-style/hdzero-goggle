@@ -1,0 +1,99 @@
+# 写真は不要です（約 2 分）。720p60（ライブ側）で、再生側が 1 コマずつ明るさ 125 のまわりを
+# 書き換えれば「透け」が 0 になるかを取り込みで数えます。
+#   モード 0: 何もしない  2: 125 だけ  3: 124-126  4: 123-127（ディザで平均は保つ）
+# 720p60 の間は再生画面の下のバーが見えませんが、この試しではそれで正常です。
+size frame
+pbdisplay 720
+pbscan 0
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 500
+label K0 keytest scan 0
+grab k720_s0 1280 720 60
+exit
+wait 800
+pbscan 2
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 500
+label K2 keytest scan 2
+grab k720_s2 1280 720 60
+exit
+wait 800
+pbscan 3
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 500
+label K3 keytest scan 3
+grab k720_s3 1280 720 60
+exit
+wait 800
+pbscan 4
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 500
+label K4 keytest scan 4
+grab k720_s4 1280 720 60
+exit
+wait 800
+echo recording
+pbscan 0
+open hdz_9048.ts
+wait 2500
+label P0 playing scan 0
+pbscan 0
+wait 1100
+loop 12
+grabcount p720_s0 1280 720 60
+wait 200
+end
+label P1 playing scan 1
+pbscan 1
+wait 1100
+loop 12
+grabcount p720_s1 1280 720 60
+wait 200
+end
+label P2 playing scan 2
+pbscan 2
+wait 1100
+loop 12
+grabcount p720_s2 1280 720 60
+wait 200
+end
+label P3 playing scan 3
+pbscan 3
+wait 1100
+loop 12
+grabcount p720_s3 1280 720 60
+wait 200
+end
+label P4 playing scan 4
+pbscan 4
+wait 1100
+loop 12
+grabcount p720_s4 1280 720 60
+wait 200
+end
+pause
+wait 500
+label R3 paused scan 4
+grab r720_s4 1280 720 60
+exit
+wait 800
+pbscan 3
+open hdz_9048.ts
+wait 3000
+pause
+wait 500
+label R3 paused scan 3
+grab r720_s3 1280 720 60
+exit
+wait 800
+pbscan 0
+pbdisplay 60
+label

@@ -13,6 +13,7 @@
 #include "common.hh"
 #include "core/app_state.h"
 #include "core/dvr.h"
+#include "driver/hardware.h"
 #include "player/avplay.h"
 #include "record/record_definitions.h"
 #include "ui/ui_porting.h"
@@ -72,6 +73,20 @@ static bool pb_seek_pending = false;
 // Keeps the bar in step with the picture.
 #define PB_TICK_MS 100
 static lv_timer_t *pb_tick_timer = NULL;
+
+// The player runs the display at 1080p60, so that 60fps recordings are shown
+// frame for frame; the menu's 1080p50 shows them 6:5 (Display_Playback()).
+// Switching costs dispw's second each way, so it is done at the first file
+// and undone when the Playback page is left, not per file.
+static bool pb_display60 = true;
+// Being tried: the live side at 720p60 in place of 1080p60, and which of the
+// two is up.
+static bool pb_display720 = false;
+static bool pb_display720_up = false;
+// Set by an autotest that compares displays: the bar says which is up.
+static bool pb_display_label = false;
+// Set by an autotest that tries variants: which one is up, in its words.
+static char pb_label[48] = "";
 
 // Open with the bar and nothing playing under it, for an autotest that drives
 // the output itself (src/player/vosend.c). Only a long press is taken then:
@@ -134,7 +149,23 @@ static void update_time_label(bool mediaOK) {
 static void update_mode_label() {
     char s[64];
 
-    snprintf(s, sizeof(s), "Step %s   Speed %s", pb_steps[pb_step].name, pb_speeds[pb_speed].name);
+    if (pb_label[0]) {
+        snprintf(s, sizeof(s), "Step %s   Speed %s   [%s]", pb_steps[pb_step].name,
+                 pb_speeds[pb_speed].name, pb_label);
+    } else
+#if defined(HDZGOGGLE2)
+    if (pb_display_label) {
+        if (pb_display60) {
+            snprintf(s, sizeof(s), "Step %s   Speed %s   [60Hz %d %s]", pb_steps[pb_step].name,
+                     pb_speeds[pb_speed].name, Display_Playback_color_index(),
+                     Display_Playback_color_name());
+        } else {
+            snprintf(s, sizeof(s), "Step %s   Speed %s   [50Hz menu]", pb_steps[pb_step].name,
+                     pb_speeds[pb_speed].name);
+        }
+    } else
+#endif
+        snprintf(s, sizeof(s), "Step %s   Speed %s", pb_steps[pb_step].name, pb_speeds[pb_speed].name);
     lv_label_set_text(controller._mode, s);
 }
 
@@ -467,9 +498,32 @@ void load_stars(char *fname) {
 
 ///////////////////////////////////////////////////////////////////////////////
 // interface func
+static void pb_display_enter(void) {
+#if defined(HDZGOGGLE2)
+    if (pb_display60 && (!Display_Playback_on() || pb_display720_up != pb_display720)) {
+        if (pb_display720) {
+            Display_Playback_720();
+        } else {
+            Display_Playback();
+        }
+        pb_display720_up = pb_display720;
+    }
+    avplay_set_screen(pb_display60 && pb_display720 ? 1280 : 1920, pb_display60 && pb_display720 ? 720 : 1080);
+#endif
+}
+
+void mplayer_release_display(void) {
+#if defined(HDZGOGGLE2)
+    if (Display_Playback_on()) {
+        Display_UI();
+    }
+#endif
+}
+
 void mplayer_file(char *fname) {
     LOGI("mplayer %s", fname);
     load_stars(fname);
+    pb_display_enter();
     init_mplayer();
 
     pb_ap = avplay_open(fname);
@@ -510,6 +564,8 @@ void mplayer_exit() {
     pb_bare = false;
 
     free_mplayer();
+    // The display stays at the player's timing for the next file; leaving the
+    // Playback page gives it back (mplayer_release_display()).
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -553,6 +609,34 @@ void mplayer_set_step_size(int index) {
         if (controller.enable) {
             update_mplayer();
         }
+    }
+}
+
+void mplayer_set_display60(int on) {
+    pb_display60 = on != 0;
+    pb_display720 = on == 720;
+    pb_display_label = true;
+    if (!pb_display60) {
+        mplayer_release_display();
+    }
+}
+
+void mplayer_set_display_color(int color) {
+    pb_display_label = true;
+#if defined(HDZGOGGLE2)
+    Display_Playback_color(color);
+#else
+    (void)color;
+#endif
+    if (controller.enable) {
+        update_mplayer();
+    }
+}
+
+void mplayer_set_label(const char *text) {
+    snprintf(pb_label, sizeof(pb_label), "%s", text);
+    if (controller.enable) {
+        update_mplayer();
     }
 }
 

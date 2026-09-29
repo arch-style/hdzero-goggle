@@ -1,0 +1,129 @@
+# 写真は不要です（約 2 分半）。720p60 で、明るさ 125 のまわりの書き換え方を比べます。
+#   0: なし  4: 123-127 を一律  6: 121-129 を一律
+#   9: 色から出力の明るさを予測して 125 付近だけ (±1.5)  10: 9 の色の面を入れ替えた版  11: 9 の幅 ±2.5
+# 720p60 の間は再生画面の下のバーが見えませんが、この試しではそれで正常です。
+size frame
+pbdisplay 720
+pbscan 0
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 400
+label K0 keytest scan 0
+grabcount k720_s0 1280 720 60
+exit
+wait 700
+pbscan 6
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 400
+label K6 keytest scan 6
+grabcount k720_s6 1280 720 60
+exit
+wait 700
+pbscan 9
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 400
+label K9 keytest scan 9
+grabcount k720_s9 1280 720 60
+exit
+wait 700
+pbscan 10
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 400
+label K10 keytest scan 10
+grabcount k720_s10 1280 720 60
+exit
+wait 700
+pbscan 11
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 400
+label K11 keytest scan 11
+grabcount k720_s11 1280 720 60
+exit
+wait 700
+echo recording
+pbscan 0
+open hdz_9048.ts
+wait 2500
+label P0 playing scan 0
+pbscan 0
+wait 1100
+loop 12
+grabcount p720_s0 1280 720 60
+wait 200
+end
+label P4 playing scan 4
+pbscan 4
+wait 1100
+loop 12
+grabcount p720_s4 1280 720 60
+wait 200
+end
+label P6 playing scan 6
+pbscan 6
+wait 1100
+loop 12
+grabcount p720_s6 1280 720 60
+wait 200
+end
+label P9 playing scan 9
+pbscan 9
+wait 1100
+loop 12
+grabcount p720_s9 1280 720 60
+wait 200
+end
+label P10 playing scan 10
+pbscan 10
+wait 1100
+loop 12
+grabcount p720_s10 1280 720 60
+wait 200
+end
+label P11 playing scan 11
+pbscan 11
+wait 1100
+loop 12
+grabcount p720_s11 1280 720 60
+wait 200
+end
+pause
+exit
+wait 700
+pbscan 9
+open hdz_9048.ts
+wait 3000
+pause
+wait 400
+label R9 paused scan 9
+grab r720_s9 1280 720 60
+exit
+wait 700
+pbscan 11
+open hdz_9048.ts
+wait 3000
+pause
+wait 400
+label R11 paused scan 11
+grab r720_s11 1280 720 60
+exit
+wait 700
+pbscan 0
+open hdz_9048.ts
+wait 3000
+pause
+wait 400
+label R0 paused scan 0
+grab r720_s0 1280 720 60
+exit
+wait 700
+pbdisplay 60
+label

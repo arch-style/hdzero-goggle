@@ -1,0 +1,146 @@
+# 写真は不要です（約 3 分）。取り込み画像と、その中の「透けた画素」(明るさ 255) の数で調べます。
+#  1) ディスプレイの画質設定 (enhance_*, color_temperature) が出力に効くか
+#  2) 再生側で 1 コマずつ明るさ 125 を書き換えたときの手間 (時間) と、透けた画素が減るか
+#     (1080p60 と、新しく試す 720p60 のライブ側)
+# 途中で画面の色や明るさが変わったり、止まったり動いたりします。
+size frame
+shell for a in enhance_mode enhance_bright enhance_contrast enhance_saturation enhance_edge enhance_detail enhance_denoise color_temperature; do echo $a=$(cat /sys/class/disp/disp/attr/$a); cp /sys/class/disp/disp/attr/$a /tmp/$a.orig; done
+pbdisplay 60
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 500
+label E0 as is
+grab k60
+label E1 enhance_mode 1
+shell echo 1 > /sys/class/disp/disp/attr/enhance_mode; echo enhance_mode now $(cat /sys/class/disp/disp/attr/enhance_mode)
+wait 700
+grab k_e1
+shell cat /tmp/enhance_mode.orig > /sys/class/disp/disp/attr/enhance_mode; echo enhance_mode back $(cat /sys/class/disp/disp/attr/enhance_mode)
+label E2 enhance_mode 2
+shell echo 2 > /sys/class/disp/disp/attr/enhance_mode; echo enhance_mode now $(cat /sys/class/disp/disp/attr/enhance_mode)
+wait 700
+grab k_e2
+shell cat /tmp/enhance_mode.orig > /sys/class/disp/disp/attr/enhance_mode; echo enhance_mode back $(cat /sys/class/disp/disp/attr/enhance_mode)
+label E3 enhance_bright 80
+shell echo 80 > /sys/class/disp/disp/attr/enhance_bright; echo enhance_bright now $(cat /sys/class/disp/disp/attr/enhance_bright)
+wait 700
+grab k_e3
+shell cat /tmp/enhance_bright.orig > /sys/class/disp/disp/attr/enhance_bright; echo enhance_bright back $(cat /sys/class/disp/disp/attr/enhance_bright)
+label E4 enhance_contrast 80
+shell echo 80 > /sys/class/disp/disp/attr/enhance_contrast; echo enhance_contrast now $(cat /sys/class/disp/disp/attr/enhance_contrast)
+wait 700
+grab k_e4
+shell cat /tmp/enhance_contrast.orig > /sys/class/disp/disp/attr/enhance_contrast; echo enhance_contrast back $(cat /sys/class/disp/disp/attr/enhance_contrast)
+label E5 enhance_saturation 80
+shell echo 80 > /sys/class/disp/disp/attr/enhance_saturation; echo enhance_saturation now $(cat /sys/class/disp/disp/attr/enhance_saturation)
+wait 700
+grab k_e5
+shell cat /tmp/enhance_saturation.orig > /sys/class/disp/disp/attr/enhance_saturation; echo enhance_saturation back $(cat /sys/class/disp/disp/attr/enhance_saturation)
+label E6 color_temperature 100
+shell echo 100 > /sys/class/disp/disp/attr/color_temperature; echo color_temperature now $(cat /sys/class/disp/disp/attr/color_temperature)
+wait 700
+grab k_e6
+shell cat /tmp/color_temperature.orig > /sys/class/disp/disp/attr/color_temperature; echo color_temperature back $(cat /sys/class/disp/disp/attr/color_temperature)
+label E7 color_temperature -100
+shell echo -100 > /sys/class/disp/disp/attr/color_temperature; echo color_temperature now $(cat /sys/class/disp/disp/attr/color_temperature)
+wait 700
+grab k_e7
+shell cat /tmp/color_temperature.orig > /sys/class/disp/disp/attr/color_temperature; echo color_temperature back $(cat /sys/class/disp/disp/attr/color_temperature)
+wait 500
+grab k60b
+exit
+wait 1000
+
+echo recording at 1080p60
+open hdz_9048.ts
+wait 3000
+pause
+wait 500
+label R60 paused
+grab r60
+play
+label S0 1080p60 scan 0
+pbscan 0
+wait 1200
+loop 8
+grabcount p60_s0
+wait 150
+end
+label S1 1080p60 scan 1
+pbscan 1
+wait 1200
+loop 8
+grabcount p60_s1
+wait 150
+end
+label S3 1080p60 scan 3
+pbscan 3
+wait 1200
+loop 8
+grabcount p60_s3
+wait 150
+end
+label S4 1080p60 scan 4
+pbscan 4
+wait 1200
+loop 8
+grabcount p60_s4
+wait 150
+end
+label S2 1080p60 scan 2
+pbscan 2
+wait 1200
+loop 8
+grabcount p60_s2
+wait 150
+end
+pbscan 0
+pause
+exit
+wait 1000
+
+echo recording at 720p60
+pbdisplay 720
+open hdz_9048.ts
+wait 3000
+pause
+wait 500
+label R720 paused
+grab r720 1280 720 60
+play
+label T0 720p60 scan 0
+pbscan 0
+wait 1200
+loop 8
+grabcount p720_s0 1280 720 60
+wait 150
+end
+label T3 720p60 scan 3
+pbscan 3
+wait 1200
+loop 8
+grabcount p720_s3 1280 720 60
+wait 150
+end
+label T4 720p60 scan 4
+pbscan 4
+wait 1200
+loop 8
+grabcount p720_s4 1280 720 60
+wait 150
+end
+pbscan 0
+pause
+exit
+wait 1000
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+wait 500
+label K720 keytest 720p60
+grab k720 1280 720 60
+exit
+wait 1000
+pbdisplay 60
+label

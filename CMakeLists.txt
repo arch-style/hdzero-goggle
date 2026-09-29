@@ -144,6 +144,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 	lib/linux/include
 	lib/linux/include/video
+	# sunxi_camera_v2.h, for the camera input (src/player/vigrab.c)
+	lib/linux/include/media
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
 	${STANDARD_LIBRARIES}

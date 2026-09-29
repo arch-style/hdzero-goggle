@@ -421,6 +421,9 @@ static void delete_video_file(int seq) {
 }
 
 static void page_playback_exit() {
+    // The player keeps the display at its own timing from one file to the
+    // next; the menu has its own back now.
+    mplayer_release_display();
     page_playback_close_status_box();
     clear_videofile_cnt();
     update_page();

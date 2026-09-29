@@ -1,0 +1,60 @@
+# 写真は不要です（約 2 分半）。720p60 で、予測方式 (9) の速さと、残る透けを多めのコマ数で数えます。
+# 今回から 720p60 でも再生画面の下のバーが（縮めて）見えるはずです。
+#   0: なし  6: 121-129 を一律  9: 予測 (±1.5)  11: 予測 (±2.5)
+size frame
+pbdisplay 720
+pbscan 9
+open /mnt/extsd/keytest.ts
+wait 2500
+pause
+wait 400
+label K9 keytest scan 9
+grab k720_s9 1280 720 60
+exit
+wait 700
+echo recording
+pbscan 0
+open hdz_9048.ts
+wait 2500
+label P0 playing scan 0
+loop 10
+grabcount p720_s0 1280 720 60
+wait 150
+end
+label P9 playing scan 9
+pbscan 9
+wait 1100
+loop 40
+grabcount p720_s9 1280 720 60
+wait 150
+end
+label P6 playing scan 6
+pbscan 6
+wait 1100
+loop 40
+grabcount p720_s6 1280 720 60
+wait 150
+end
+label P11 playing scan 11
+pbscan 11
+wait 1100
+loop 40
+grabcount p720_s11 1280 720 60
+wait 150
+end
+pause
+wait 400
+label R11 paused scan 11
+grab r720_s11 1280 720 60
+pbscan 9
+play
+wait 1500
+pause
+wait 400
+label R9 paused scan 9
+grab r720_s9 1280 720 60
+exit
+wait 700
+pbscan 0
+pbdisplay 60
+label

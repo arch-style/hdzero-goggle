@@ -2,13 +2,18 @@
 
 #if HDZGOGGLE2
 
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+// hwdisplay.h gives sunxi_display2.h the u32 and friends it expects.
+#include <hwdisplay.h>
 
 #include <log/log.h>
 
@@ -682,6 +687,166 @@ static void vdpo_set_timing(vdpo_tmg_t tmg, const char *mode) {
     g_hw_stat.vdpo_tmg = tmg;
 }
 
+// The player's 1080p60 is up (Display_Playback()); the menu's display ends it.
+static bool playback_display = false;
+
+// The SoC's output range, being tried for the live side. Its brightest
+// parts came out with rainbow specks around them (fluorescent tubes, white
+// letters) where the menu's side shows them clean, and the rest of the
+// picture right: what a full-range output would do to a receiver that takes
+// 0x00 and 0xFF as timing codes, or that turns YUV into RGB without clamping
+// near white. So the output range, 16-235 against the 0-255 it has. (Setting
+// it through DISP_DEVICE_SET_CONFIG did nothing on this output -- the config
+// read back half garbage and unchanged -- so it is DISP_SET_COLOR_RANGE.)
+// 0 leaves it alone; what it had is put back when the menu's display returns.
+typedef struct {
+    const char *name;
+    int range; // -1 = leave it
+} playback_color_t;
+
+static const playback_color_t playback_colors[] = {
+    {"as is", -1},
+    {"16-235", DISP_COLOR_RANGE_16_235},
+    {"0-255", DISP_COLOR_RANGE_0_255},
+    {"default", DISP_COLOR_RANGE_DEFAULT},
+};
+#define PLAYBACK_COLORS ((int)(sizeof(playback_colors) / sizeof(playback_colors[0])))
+
+static int playback_color = 0;
+static int output_range_saved = -1;
+static bool output_changed = false;
+
+// DISP_GET_COLOR_RANGE answers with the range; DISP_SET_COLOR_RANGE with 0.
+static int display_color_range(int set) {
+    const int fd = open("/dev/disp", O_RDWR);
+    unsigned long args[4] = {0, set >= 0 ? (unsigned long)set : 0, 0, 0};
+    int ret;
+
+    if (fd < 0) {
+        return -1;
+    }
+    ret = ioctl(fd, set >= 0 ? DISP_SET_COLOR_RANGE : DISP_GET_COLOR_RANGE, args);
+    close(fd);
+    return ret;
+}
+
+// Under hardware_mutex.
+static void playback_color_apply(void) {
+    const int now = display_color_range(-1);
+
+    if (output_range_saved < 0) {
+        output_range_saved = now;
+    }
+    if (playback_color == 0 && !output_changed) {
+        LOGI("display output range %d", now);
+        return;
+    }
+
+    const playback_color_t *pc = &playback_colors[playback_color];
+    const int want = pc->range >= 0 ? pc->range : output_range_saved;
+    const int ret = display_color_range(want);
+
+    output_changed = playback_color != 0;
+    LOGI("display output range %s: %d -> %d (set %d, reads %d)", pc->name, now, want, ret,
+         display_color_range(-1));
+}
+
+// Under hardware_mutex: the menu's side gets the range it has always had.
+static void playback_color_restore(void) {
+    if (!output_changed || output_range_saved < 0) {
+        return;
+    }
+    display_color_range(output_range_saved);
+    output_changed = false;
+    LOGI("display output range restored to %d (reads %d)", output_range_saved, display_color_range(-1));
+}
+
+void Display_Playback_color(int color) {
+    if (color < 0 || color >= PLAYBACK_COLORS) {
+        return;
+    }
+    pthread_mutex_lock(&hardware_mutex);
+    playback_color = color;
+    if (playback_display) {
+        playback_color_apply();
+    }
+    pthread_mutex_unlock(&hardware_mutex);
+}
+
+const char *Display_Playback_color_name(void) {
+    return playback_colors[playback_color].name;
+}
+
+int Display_Playback_color_index(void) {
+    return playback_color;
+}
+
+// Being tried: the LCD gamma table, to keep the player's picture off the
+// live side's transparent grey. The live OSD's background is 0x7f7f7f
+// (style_osd), 125/128/128 on this 16-235 output, and the FPGA shows the
+// live layer wherever the SoC's output is exactly that: recordings have it
+// here and there, most around the white of lights and letters. If the table
+// acts on the output as it leaves, sending 125 to 126 makes it impossible.
+// 0 turns it off; the menu's display turns it off.
+static const char *const playback_gammas[] = {
+    "off", "identity", "all 125>126", "all 127>128", "hi 125>126", "lo 125>126", "all inverted",
+    "hi inverted", "mid inverted",
+};
+#define PLAYBACK_GAMMAS ((int)(sizeof(playback_gammas) / sizeof(playback_gammas[0])))
+static bool gamma_on = false;
+
+static uint32_t gamma_entry(int mode, uint32_t i) {
+    uint32_t hi = i, mid = i, lo = i;
+
+    switch (mode) {
+    case 2: hi = mid = lo = (i == 125) ? 126 : i; break;
+    case 3: hi = mid = lo = (i == 127) ? 128 : i; break;
+    case 4: hi = (i == 125) ? 126 : i; break;
+    case 5: lo = (i == 125) ? 126 : i; break;
+    case 6: hi = mid = lo = 255 - i; break;
+    case 7: hi = 255 - i; break;
+    case 8: mid = 255 - i; break;
+    default: break;
+    }
+    return (hi << 16) | (mid << 8) | lo;
+}
+
+// Under hardware_mutex.
+static void display_gamma(int mode) {
+    static uint32_t table[256];
+    unsigned long args[4] = {0};
+    int fd = open("/dev/disp", O_RDWR);
+    int set = 0, en;
+
+    if (fd < 0) {
+        return;
+    }
+    if (mode == 0) {
+        en = ioctl(fd, DISP_LCD_GAMMA_CORRECTION_DISABLE, args);
+    } else {
+        for (uint32_t i = 0; i < 256; i++) {
+            table[i] = gamma_entry(mode, i);
+        }
+        args[1] = (unsigned long)table;
+        args[2] = sizeof(table);
+        set = ioctl(fd, DISP_LCD_SET_GAMMA_TABLE, args);
+        args[1] = args[2] = 0;
+        en = ioctl(fd, DISP_LCD_GAMMA_CORRECTION_ENABLE, args);
+    }
+    close(fd);
+    gamma_on = mode != 0;
+    LOGI("display gamma %s: set %d, enable %d", playback_gammas[mode], set, en);
+}
+
+void Display_Playback_gamma(int mode) {
+    if (mode < 0 || mode >= PLAYBACK_GAMMAS) {
+        return;
+    }
+    pthread_mutex_lock(&hardware_mutex);
+    display_gamma(mode);
+    pthread_mutex_unlock(&hardware_mutex);
+}
+
 void Display_UI_init() {
     // The boot call configures the display for the menu, and the switch to the
     // last source immediately reconfigures it for the video, paying dispw's
@@ -691,11 +856,17 @@ void Display_UI_init() {
     bool skip_timing = first_call && g_setting.speed.boot_display;
 
     first_call = false;
+    playback_display = false;
+    playback_color_restore();
+    if (gamma_on) {
+        display_gamma(0);
+    }
 
     g_hw_stat.source_mode = SOURCE_MODE_UI;
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
-    // 1080p50, and it cannot be anything else. The recordings are 720p60, and
+    // 1080p50 on this side of the mux (the player gets to 1080p60 on the
+    // other: Display_Playback()). The recordings are 720p60, and
     // since the decoder's 40fps drop was lifted (a frame interval in
     // libmpp_vo.so) 60 frames a second reach this panel and can only be shown
     // 6:5 at 50Hz. Two ways to a 60Hz panel were measured here and both
@@ -746,6 +917,93 @@ void Display_UI() {
     screen.display(1);
     LOGI("switch mark: oled on");
     pthread_mutex_unlock(&hardware_mutex);
+}
+
+// The player's display: 1080p60, so that recordings made at 60fps are shown
+// frame for frame. The menu's 1080p50 shows them 6:5, ten frames a second
+// never reaching the panel.
+//
+// It goes through the live side of the FPGA mux. The UI side seems to hold a
+// geometry of its own for 1080p50: at 60Hz it tore the picture diagonally
+// (1080p60, with the menu's clock phases and again with the 1080p30 camera's
+// phases, FPGA 0x80 and geometry) and at 720p60 it showed four copies across
+// with the lines shifted (with and without the 720p60 geometry). The live
+// side takes 1080p60 from the SoC every day: it is what the 1080p30 camera
+// runs the display at, with the SoC's output as the OSD over the live
+// picture. With the receiver off the live picture is black, and the SoC's
+// output -- the player's video layer and LVGL's -- is the whole screen.
+// Measured on the goggle 2: the display driver at 60.6fps, and a bar
+// moving 8px a frame, the controls and the picture all correct; the same at
+// 720p60 with the 720p60 camera's settings.
+//
+// Everything is as Display_1080P30_t() has it except the receiver, which is
+// left alone: the source stays the UI's, so Display_VO_SWITCH() does not open
+// it. Display_UI_init(), which every return to the menu goes through, ends it.
+void Display_Playback(void) {
+    pthread_mutex_lock(&hardware_mutex);
+    LOGI("switch mark: Display_Playback start");
+    screen.display(0);
+
+    g_hw_stat.source_mode = SOURCE_MODE_UI;
+    I2C_Write(ADDR_FPGA, 0x8C, 0x00);
+    vdpo_set_timing(VDPO_TMG_1080P60, "1080p60");
+    system_exec("aww 0x0300b340 0x00000008");
+
+    vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30, 0);
+    pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30);
+    I2C_Write(ADDR_FPGA, 0x80, 0x04);
+    I2C_Write(ADDR_FPGA, 0x84, 0x11); // the SoC's output over the live picture
+
+    screen.mfpga.set1080p30();
+    screen.vtmg(0);
+    system_exec("aww 0x0300b084 0x00003fff");
+    I2C_Write(ADDR_FPGA, 0xa7, 0x00);
+    I2C_Write(ADDR_FPGA, 0x8C, 0x01);
+    Display_VO_SWITCH(1);
+    system_exec("aww 0x06542018 0x00000044");
+
+    playback_color_apply();
+
+    screen.display(1);
+    playback_display = true;
+    LOGI("switch mark: Display_Playback done");
+    pthread_mutex_unlock(&hardware_mutex);
+}
+
+// Being tried: the same side at 720p60, as the 720p60 camera runs it. The
+// SoC's output is then the recording's own size and the FPGA scales it to the
+// panel, so a frame reaches the output pixel for pixel.
+void Display_Playback_720(void) {
+    pthread_mutex_lock(&hardware_mutex);
+    LOGI("switch mark: Display_Playback_720 start");
+    screen.display(0);
+
+    g_hw_stat.source_mode = SOURCE_MODE_UI;
+    I2C_Write(ADDR_FPGA, 0x8C, 0x00);
+    vdpo_set_timing(VDPO_TMG_720P60, "720p60");
+    system_exec("aww 0x0300b340 0x00000008");
+
+    vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P60_50, 0);
+    pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P60_50);
+    I2C_Write(ADDR_FPGA, 0x80, 0x00);
+    I2C_Write(ADDR_FPGA, 0x84, 0x11);
+
+    screen.mfpga.set720p60(VR_720P60, 0);
+    screen.vtmg(1);
+    system_exec("aww 0x0300b084 0x00003fff");
+    I2C_Write(ADDR_FPGA, 0xa7, 0x11);
+    I2C_Write(ADDR_FPGA, 0x8C, 0x01);
+    Display_VO_SWITCH(1);
+    system_exec("aww 0x06542018 0x00000044");
+
+    screen.display(1);
+    playback_display = true;
+    LOGI("switch mark: Display_Playback_720 done");
+    pthread_mutex_unlock(&hardware_mutex);
+}
+
+bool Display_Playback_on(void) {
+    return playback_display && g_hw_stat.source_mode == SOURCE_MODE_UI;
 }
 
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60

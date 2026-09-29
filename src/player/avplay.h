@@ -55,6 +55,14 @@ bool avplay_step(AvPlay_t *ap, bool forward);
 // was.
 bool avplay_seek(AvPlay_t *ap, int ms);
 
+// Being tried, for the goggle 2's live-side display: the size of the screen
+// the picture fills, from the next avplay_open() (1920x1080), and a pass over
+// each frame's luma before it goes out (see avplay_scan()); 0 is none.
+void avplay_set_screen(int width, int height);
+void avplay_set_scan(int mode);
+// The colour space the video layer is declared in (avplay_colorspace()).
+void avplay_set_colorspace(int mode);
+
 #ifdef __cplusplus
 }
 #endif

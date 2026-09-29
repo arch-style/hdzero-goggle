@@ -1,0 +1,48 @@
+# 1080p60（ライブ側の経路）で明るい部分に虹色の粒が出る件。SoC の出力範囲を切り替えて比べる
+# （イヤホン不要、約 1 分）。まず 50Hz（正しい色）で見ておき、次に 60Hz で再生しながら
+# 4 秒ずつ切り替える。画面下のバーの 2 行目 [60Hz 番号 名前] が今の設定。
+#   0 as is     今のまま（0-255 のはず）
+#   1 16-235    本命: 0x00/0xFF を出さない
+#   2 0-255     明示（0 と同じなら同じ見え方のはず）
+#   3 default   ドライバの既定
+# 見るところ: 蛍光灯のまわり・白い文字のふちの虹色の粒が消えるか。黒が灰色っぽく浮かないか、
+# 白がくすまないか（50Hz と比べて）。実際の値は "display output range" 行。
+size frame
+
+echo ref 50Hz
+pbdisplay 50
+open /mnt/extsd/colors.ts
+wait 4000
+exit
+wait 1000
+open hdz_9048.ts
+wait 5000
+exit
+wait 1000
+
+echo 60Hz bars
+pbdisplay 60
+pbcolor 0
+open /mnt/extsd/colors.ts
+wait 4000
+pbcolor 1
+wait 4000
+pbcolor 2
+wait 4000
+pbcolor 3
+wait 4000
+exit
+wait 1000
+
+echo 60Hz recording
+pbcolor 0
+open hdz_9048.ts
+wait 4000
+pbcolor 1
+wait 4000
+pbcolor 2
+wait 4000
+pbcolor 3
+wait 4000
+exit
+pbcolor 0

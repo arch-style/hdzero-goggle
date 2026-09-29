@@ -1,0 +1,49 @@
+# 再生画面の 1080p60（ライブ側の経路、src/driver/hardware-goggle2.c Display_Playback）の確認。
+#   1 motion.ts: 1080p60 に切り替わって再生（棒の流れ、バー、画面）→ 抜ける（60 のまま）
+#   2 録画: 2 本目は切り替えなしですぐ開く。止める→コマ送り→再開→抜ける
+#   3 pbdisplay 50: 1080p50 に戻して motion.ts（比較）
+#   4 pbdisplay 60: また 1080p60 で録画、シーク
+#   終わると 1080p50 のメニューに戻る
+# 表示エンジンの fps は "AT shell" の vdpo 行、切り替えは "Display_Playback" 行。
+size frame
+stepgap 300
+
+echo 1 motion 60
+open /mnt/extsd/motion.ts
+wait 2500
+shell grep -a "fps" /sys/class/disp/disp/attr/sys
+wait 3000
+exit
+wait 1500
+
+echo 2 second file, no switch
+open hdz_0018.ts
+wait 2000
+shell grep -a "fps" /sys/class/disp/disp/attr/sys
+pause
+wait 800
+step +3
+play
+waitresume 5000
+wait 2000
+exit
+wait 1500
+
+echo 3 back to 50
+pbdisplay 50
+open /mnt/extsd/motion.ts
+wait 2500
+shell grep -a "fps" /sys/class/disp/disp/attr/sys
+wait 3000
+exit
+wait 1500
+
+echo 4 60 again
+pbdisplay 60
+open hdz_9048.ts
+wait 2500
+shell grep -a "fps" /sys/class/disp/disp/attr/sys
+size 10s
+up 2
+wait 2500
+exit

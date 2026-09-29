@@ -1,4 +1,5 @@
 #include "player/avplay.h"
+#include "player/vigrab.h"
 #include "player/vosend.h"
 
 // The player decodes on the goggle's hardware; the emulator plays nothing,
@@ -15,10 +16,16 @@ void avplay_play(AvPlay_t *ap, int divider) {}
 void avplay_pause(AvPlay_t *ap) {}
 bool avplay_step(AvPlay_t *ap, bool forward) { return false; }
 bool avplay_seek(AvPlay_t *ap, int ms) { return false; }
+void avplay_set_screen(int width, int height) {}
+void avplay_set_scan(int mode) {}
+void avplay_set_colorspace(int mode) {}
 
 const char *vosend_mode_name(int mode) { return "?"; }
 int vosend_mode_parse(const char *name) { return -1; }
 bool vosend_run(const char *path, const vosend_opts_t *opts) { return false; }
+
+bool vigrab_save(const char *name, const char *path, int width, int height, int fps, int skip) { return false; }
+void vigrab_close(void) {}
 
 #if HDZGOGGLE
 void Display_HDZ(int mode, int is_43) {}

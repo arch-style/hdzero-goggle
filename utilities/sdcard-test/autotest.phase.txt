@@ -1,0 +1,91 @@
+# 60Hz 再生で出る虹色・緑の粒の原因探し（イヤホン不要、約 1 分半）。
+# 本命: FPGA が SoC の映像を取り込むタイミング（レジスタ 0x8e）。メニューは 0x20、
+# 今の 60Hz 経路は 0x00（ライブ 1080p30 カメラ用の値）。ファームにはこの 2 ビットを
+# 反転する「ちらつき対策」ファイルまで用意されている。
+# 画面下のバーの 2 行目 [ ] の中の英字が今の設定。止めた絵のまま切り替えるので、
+# 英字ごとに「蛍光灯・白い文字のまわりの虹色／緑の粒があるか」と、
+# 「粒が止めた絵の上でチラチラ動くか」を見てください。
+#   A 8e=00 now        今のまま（虹色が出るはず）
+#   B 8e=20 menu's     本命: メニューと同じタイミング
+#   C 8e=01
+#   D 8e=21
+#   E 8e=00 dclk inv   SoC 側のクロック反転
+#   F 8e=20 dclk inv
+#   G 8e=00 playing    A を動かして
+#   H 8e=20 playing    B を動かして
+#   I saturation 0     白黒になれば FPGA の色調整が再生にもかかっている
+#   J contrast low     薄くなれば同上
+#   K bars 8e=00       カラーバーで A
+#   L bars 8e=20       カラーバーで B
+# 画面が崩れる英字があっても次で戻ります。
+size frame
+pbdisplay 60
+
+echo recording
+open hdz_9048.ts
+wait 3000
+pause
+wait 500
+fpga 0x80
+fpga 0x84
+fpga 0x85
+fpga 0x86
+fpga 0x87
+fpga 0x8e
+fpga 0xa7
+
+label A 8e=00 now
+fpga 0x8e 0x00
+wait 6000
+label B 8e=20 menu's
+fpga 0x8e 0x20
+wait 6000
+label C 8e=01
+fpga 0x8e 0x01
+wait 6000
+label D 8e=21
+fpga 0x8e 0x21
+wait 6000
+
+label E 8e=00 dclk inv
+fpga 0x8e 0x00
+shell aww 0x06542008 0x0000000b
+wait 6000
+label F 8e=20 dclk inv
+fpga 0x8e 0x20
+wait 6000
+shell aww 0x06542008 0x00000003
+
+label G 8e=00 playing
+fpga 0x8e 0x00
+play
+wait 6000
+label H 8e=20 playing
+fpga 0x8e 0x20
+wait 6000
+pause
+
+label I saturation 0
+fpga 0x87 0x00
+wait 5000
+fpga restore
+label J contrast low
+fpga 0x86 0x40
+wait 5000
+fpga restore
+exit
+wait 1000
+
+echo bars
+open /mnt/extsd/colors.ts
+wait 2000
+pause
+label K bars 8e=00
+fpga 0x8e 0x00
+wait 6000
+label L bars 8e=20
+fpga 0x8e 0x20
+wait 6000
+exit
+fpga restore
+label

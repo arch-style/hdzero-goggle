@@ -1,0 +1,89 @@
+# 写真は不要です（約 2 分半）。720p60 で、書き換えの処理がコマ遅れを起こさないかを、
+# 取り込みなしで 8 秒ずつ測ります。そのあと予測方式で再生中の画面を 16 枚保存します。
+#   0: なし  6: 121-129 を一律  9: 予測 (±1.5)  11: 予測 (±2.5)
+size frame
+pbdisplay 720
+pbscan 9
+open /mnt/extsd/keytest.ts
+wait 6000
+label K9 keytest scan 9
+pause
+exit
+wait 700
+echo recording
+pbscan 0
+open hdz_9048.ts
+wait 500
+pause
+label P0 playing scan 0
+pbscan 0
+play
+wait 8000
+pause
+wait 300
+label P6 playing scan 6
+pbscan 6
+play
+wait 8000
+pause
+wait 300
+label P9 playing scan 9
+pbscan 9
+play
+wait 8000
+pause
+wait 300
+label P11 playing scan 11
+pbscan 11
+play
+wait 8000
+pause
+wait 300
+label P0 playing scan 0
+pbscan 0
+play
+wait 8000
+pause
+wait 300
+label S9 saving scan 9
+pbscan 9
+play
+wait 1000
+grab p9_00 1280 720 60
+wait 250
+grab p9_01 1280 720 60
+wait 250
+grab p9_02 1280 720 60
+wait 250
+grab p9_03 1280 720 60
+wait 250
+grab p9_04 1280 720 60
+wait 250
+grab p9_05 1280 720 60
+wait 250
+grab p9_06 1280 720 60
+wait 250
+grab p9_07 1280 720 60
+wait 250
+grab p9_08 1280 720 60
+wait 250
+grab p9_09 1280 720 60
+wait 250
+grab p9_10 1280 720 60
+wait 250
+grab p9_11 1280 720 60
+wait 250
+grab p9_12 1280 720 60
+wait 250
+grab p9_13 1280 720 60
+wait 250
+grab p9_14 1280 720 60
+wait 250
+grab p9_15 1280 720 60
+wait 250
+pause
+exit
+wait 700
+pbscan 0
+pbdisplay 60
+label

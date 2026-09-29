@@ -36,6 +36,24 @@
 //                        routing back the way the menu leaves it
 //   mixer                every ALSA mixer control and its value, one line each
 //   shell <command>      run it and put what it prints in the log
+//   pbdisplay 50|60|720  the display the player runs on, from the next open:
+//                        the menu's 1080p50, 1080p60 (the default), or the
+//                        live side at 720p60 (being tried)
+//   pbcolor <n>          the SoC's output format at 1080p60 (Display_Playback_color())
+//   pbcs <n>             the video layer's colour space, being tried (avplay_colorspace())
+//   pbscan <n>           the player's pass over each frame, being tried (avplay_scan())
+//   pbgamma <n>          the display's gamma table, being tried (Display_Playback_gamma())
+//   fpga <reg> [value]   read an FPGA register, or write it and read it back;
+//                        "fpga dump" reads them all, "fpga restore" puts the
+//                        image controls back
+//   mem <addr> [words]   read SoC registers (32-bit words, from /dev/mem)
+//   label <text>         shown on the player's bar, to tell variants apart
+//   grab <name> [w h fps]  one frame of the DVR input, i.e. the screen after
+//                        the FPGA, to grab/<name>.nv21 (1920 1080 30); needs
+//                        a file open in the player. The input stays open until
+//                        grabstop, exit or open
+//   grabcount <name> [w h fps]  the same, only logging its pixels at 255 (where
+//                        the live layer shows through)
 //   exit                 leave the player
 //   halt                 stop the script here
 //
@@ -44,10 +62,14 @@
 
 #include "autotest.h"
 
+#include <fcntl.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -56,8 +78,13 @@
 #include "core/app_state.h"
 #include "core/common.hh"
 #include "core/dvr.h"
+#include "core/settings.h"
 #include "driver/beep.h"
+#include "driver/hardware.h"
+#include "driver/i2c.h"
 #include "player/asend.h"
+#include "player/avplay.h"
+#include "player/vigrab.h"
 #include "player/vosend.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_player.h"
@@ -65,6 +92,7 @@
 #define AUTOTEST_FILE "/mnt/extsd/autotest.txt"
 #define AUTOTEST_RAN "/mnt/extsd/autotest.ran.txt"
 #define AUTOTEST_MEDIA_DIR "/mnt/extsd/DCIM/100HDZRO/"
+#define AUTOTEST_GRAB_DIR "/mnt/extsd/grab"
 // Time for the menu to settle after boot before the first command.
 #define AUTOTEST_SETTLE_MS 5000
 #define AUTOTEST_MAX_LINES 2000
@@ -301,6 +329,107 @@ static void at_shell(const char *line) {
     LOGI("AT shell done, %d lines, exit %d", count, pclose(fp));
 }
 
+// Reads an FPGA register, or writes it and reads it back. "dump" reads all
+// of them. "restore" puts the image controls (0x85-0x87) back from the
+// settings; the display registers are all written again by the next display
+// switch (Display_UI_init()).
+static void at_fpga(const char *a1, const char *a2) {
+    if (strcmp(a1, "dump") == 0) {
+        for (int base = 0; base < 256; base += 16) {
+            char s[64];
+            int n = 0;
+            for (int r = 0; r < 16; r++) {
+                n += snprintf(s + n, sizeof(s) - n, " %02x", I2C_Read(ADDR_FPGA, base + r) & 0xff);
+            }
+            LOGI("AT fpga %02x:%s", base, s);
+        }
+        return;
+    }
+    if (strcmp(a1, "restore") == 0) {
+        Set_Brightness(g_setting.image.brightness);
+        Set_Contrast(g_setting.image.contrast);
+        Set_Saturation(g_setting.image.saturation);
+        LOGI("AT fpga image controls back to brightness %d contrast %d saturation %d",
+             g_setting.image.brightness, g_setting.image.contrast, g_setting.image.saturation);
+        return;
+    }
+    const int reg = (int)strtol(a1, NULL, 0) & 0xff;
+    const int was = I2C_Read(ADDR_FPGA, reg);
+    if (!a2[0]) {
+        LOGI("AT fpga 0x%02x reads 0x%02x", reg, was);
+        return;
+    }
+    const int val = (int)strtol(a2, NULL, 0) & 0xff;
+    I2C_Write(ADDR_FPGA, reg, val);
+    LOGI("AT fpga 0x%02x: read 0x%02x, wrote 0x%02x, reads 0x%02x", reg, was, val,
+         I2C_Read(ADDR_FPGA, reg));
+}
+
+// Reads 32-bit registers of the SoC (the display engine, the VDPO), four to
+// a line.
+static void at_mem(const char *a1, const char *a2) {
+    const unsigned long addr = strtoul(a1, NULL, 0) & ~3UL;
+    const int words = a2[0] ? atoi(a2) : 1;
+    const unsigned long page = (unsigned long)sysconf(_SC_PAGESIZE);
+    const unsigned long base = addr & ~(page - 1);
+    const size_t len = (addr - base) + (size_t)words * 4;
+
+    int fd = open("/dev/mem", O_RDONLY | O_SYNC);
+    if (fd < 0) {
+        LOGW("AT mem: cannot open /dev/mem");
+        return;
+    }
+    void *map = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, (off_t)base);
+    close(fd);
+    if (map == MAP_FAILED) {
+        LOGW("AT mem: cannot map 0x%08lx", base);
+        return;
+    }
+    const volatile uint32_t *w = (const volatile uint32_t *)((char *)map + (addr - base));
+    for (int i = 0; i < words; i += 4) {
+        char s[64];
+        int n = 0;
+        for (int k = i; k < i + 4 && k < words; k++) {
+            n += snprintf(s + n, sizeof(s) - n, " %08x", (unsigned)w[k]);
+        }
+        LOGI("AT mem %08lx:%s", addr + (unsigned long)i * 4, s);
+    }
+    munmap(map, len);
+}
+
+// One frame of the DVR input into grab/<name>.nv21 on the card
+// (src/player/vigrab.h): what the goggle shows after the FPGA.
+// Without a size, the whole 1080p60 screen: the input gives 1920x1080 at
+// 30fps (at 60 it gives 1280x720, the top-left of it).
+static void at_grab(const char *line, bool save) {
+    char name[64] = "", path[128];
+    int width = 1920, height = 1080, fps = 30;
+
+    if (sscanf(line, "%*s %63s %d %d %d", name, &width, &height, &fps) < 1) {
+        LOGW("AT grab: no name");
+        return;
+    }
+    if (save) {
+        mkdir(AUTOTEST_GRAB_DIR, 0755);
+        snprintf(path, sizeof(path), "%s/%s.nv21", AUTOTEST_GRAB_DIR, name);
+    }
+    const uint32_t t0 = lv_tick_get();
+    const bool ok = vigrab_save(name, save ? path : NULL, width, height, fps, 2);
+    LOGI("AT grab %s %dx%d@%d: %s in %ums", name, width, height, fps, ok ? "ok" : "failed",
+         lv_tick_elaps(t0));
+}
+
+static void at_label(const char *line) {
+    const char *text = line + strlen("label");
+
+    while (*text == ' ' || *text == '\t') {
+        text++;
+    }
+    pthread_mutex_lock(&lvgl_mutex);
+    mplayer_set_label(text);
+    pthread_mutex_unlock(&lvgl_mutex);
+}
+
 static void at_wait_resume(int timeout_ms) {
     const uint32_t t0 = lv_tick_get();
 
@@ -354,6 +483,7 @@ static bool at_run(int i, char *line) {
     at_log_cmd(i, line);
 
     if (strcmp(op, "open") == 0) {
+        vigrab_close();
         at_open(a1);
     } else if (strcmp(op, "wait") == 0) {
         at_sleep_ms(atoi(a1));
@@ -403,6 +533,7 @@ static bool at_run(int i, char *line) {
             }
         }
     } else if (strcmp(op, "press") == 0 || strcmp(op, "exit") == 0) {
+        vigrab_close();
         at_key(DIAL_KEY_PRESS);
     } else if (strcmp(op, "right") == 0) {
         at_key(RIGHT_KEY_CLICK);
@@ -424,6 +555,28 @@ static bool at_run(int i, char *line) {
         at_mixer();
     } else if (strcmp(op, "shell") == 0) {
         at_shell(line);
+    } else if (strcmp(op, "pbdisplay") == 0) {
+        at_under_lock(mplayer_set_display60, atoi(a1) == 50 ? 0 : atoi(a1));
+    } else if (strcmp(op, "pbcolor") == 0) {
+        at_under_lock(mplayer_set_display_color, atoi(a1));
+    } else if (strcmp(op, "pbcs") == 0) {
+        avplay_set_colorspace(atoi(a1));
+    } else if (strcmp(op, "pbscan") == 0) {
+        avplay_set_scan(atoi(a1));
+    } else if (strcmp(op, "pbgamma") == 0) {
+#if defined(HDZGOGGLE2)
+        Display_Playback_gamma(atoi(a1));
+#endif
+    } else if (strcmp(op, "fpga") == 0) {
+        at_fpga(a1, a2);
+    } else if (strcmp(op, "mem") == 0) {
+        at_mem(a1, a2);
+    } else if (strcmp(op, "grab") == 0 || strcmp(op, "grabcount") == 0) {
+        at_grab(line, op[4] == 0);
+    } else if (strcmp(op, "grabstop") == 0) {
+        vigrab_close();
+    } else if (strcmp(op, "label") == 0) {
+        at_label(line);
     } else if (strcmp(op, "echo") == 0) {
         // already logged by at_log_cmd
     } else if (strcmp(op, "halt") == 0) {
@@ -495,12 +648,18 @@ static void *at_thread(void *arg) {
         }
     }
 
+    vigrab_close();
     pthread_mutex_lock(&lvgl_mutex);
     bool open = mplayer_is_open();
     pthread_mutex_unlock(&lvgl_mutex);
     if (open) {
         at_key(DIAL_KEY_PRESS);
     }
+    // The script opened files without the Playback page, whose exit is what
+    // gives the display back.
+    pthread_mutex_lock(&lvgl_mutex);
+    mplayer_release_display();
+    pthread_mutex_unlock(&lvgl_mutex);
     LOGI("AT done commands=%d elapsed_ms=%u", executed, lv_tick_elaps(t0));
 
     // Done, and audibly so: three short and one long, unlike any key beep,

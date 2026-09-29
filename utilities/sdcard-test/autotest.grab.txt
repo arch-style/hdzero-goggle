@@ -1,0 +1,192 @@
+# スクリーンショット（DVR 入力の取り込み）の試しと、FPGA レジスタの自動スキャン（約 2 分半）。
+#
+# 前半: 写真は REF と A の 2 枚だけください。同じ瞬間の取り込み画像 (grab/*.nv21) と
+#       見比べて、取り込みがゴーグルの見え方と同じか（A で帯 1・2 のマゼンタの縦線が
+#       写るか）を確かめます。
+# 後半: バーに "scan 番号=値" と出ている間は写真不要です。アプリが一度も書かない
+#       レジスタを 1 つずつ別の値にして 1 枚ずつ取り込み、すぐ元に戻します。
+#       画面が一瞬崩れたり暗くなったりすることがあります。最後は元の画面に戻ります。
+size frame
+
+pbdisplay 50
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+label REF 50Hz menu
+wait 3000
+grab ref50 1920 1080 50
+grab ref50s 1280 720 50
+wait 2000
+exit
+wait 1000
+
+pbdisplay 60
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+label A 60Hz now
+wait 3000
+grab a60 1920 1080 60
+grab a60s 1280 720 60
+grab a60h 1920 1080 30
+wait 2000
+
+label scan 50=00
+fpga 0x50 0x00
+wait 1200
+grab r50_00
+fpga 0x50 0xff
+wait 300
+label scan 51=00
+fpga 0x51 0x00
+wait 1200
+grab r51_00
+fpga 0x51 0x83
+wait 300
+label scan 55=00
+fpga 0x55 0x00
+wait 1200
+grab r55_00
+fpga 0x55 0x37
+wait 300
+label scan 57=00
+fpga 0x57 0x00
+wait 1200
+grab r57_00
+fpga 0x57 0x6e
+wait 300
+label scan 58=00
+fpga 0x58 0x00
+wait 1200
+grab r58_00
+fpga 0x58 0x05
+wait 300
+label scan 59=00
+fpga 0x59 0x00
+wait 1200
+grab r59_00
+fpga 0x59 0x0a
+wait 300
+label scan 5a=00
+fpga 0x5a 0x00
+wait 1200
+grab r5a_00
+fpga 0x5a 0x10
+wait 300
+label scan 5b=00
+fpga 0x5b 0x00
+wait 1200
+grab r5b_00
+fpga 0x5b 0x14
+wait 300
+label scan 5c=00
+fpga 0x5c 0x00
+wait 1200
+grab r5c_00
+fpga 0x5c 0x0c
+wait 300
+label scan 5d=00
+fpga 0x5d 0x00
+wait 1200
+grab r5d_00
+fpga 0x5d 0x48
+wait 300
+label scan 5e=00
+fpga 0x5e 0x00
+wait 1200
+grab r5e_00
+fpga 0x5e 0x03
+wait 300
+label scan 5f=00
+fpga 0x5f 0x00
+wait 1200
+grab r5f_00
+fpga 0x5f 0x60
+wait 300
+label scan 62=00
+fpga 0x62 0x00
+wait 1200
+grab r62_00
+fpga 0x62 0x85
+wait 300
+label scan 67=00
+fpga 0x67 0x00
+wait 1200
+grab r67_00
+fpga 0x67 0x0a
+wait 300
+label scan 83=10
+fpga 0x83 0x10
+wait 1200
+grab r83_10
+fpga 0x83 0x11
+wait 300
+label scan 83=01
+fpga 0x83 0x01
+wait 1200
+grab r83_01
+fpga 0x83 0x11
+wait 300
+label scan 83=00
+fpga 0x83 0x00
+wait 1200
+grab r83_00
+fpga 0x83 0x11
+wait 300
+label scan 88=00
+fpga 0x88 0x00
+wait 1200
+grab r88_00
+fpga 0x88 0x02
+wait 300
+label scan 88=03
+fpga 0x88 0x03
+wait 1200
+grab r88_03
+fpga 0x88 0x02
+wait 300
+label scan 93=01
+fpga 0x93 0x01
+wait 1200
+grab r93_01
+fpga 0x93 0x00
+wait 300
+label scan a5=00
+fpga 0xa5 0x00
+wait 1200
+grab ra5_00
+fpga 0xa5 0x01
+wait 300
+label scan a6=00
+fpga 0xa6 0x00
+wait 1200
+grab ra6_00
+fpga 0xa6 0x80
+wait 300
+label scan a6=7f
+fpga 0xa6 0x7f
+wait 1200
+grab ra6_7f
+fpga 0xa6 0x80
+wait 300
+label scan a6=ff
+fpga 0xa6 0xff
+wait 1200
+grab ra6_ff
+fpga 0xa6 0x80
+wait 300
+label scan done
+grab a60end
+exit
+wait 1000
+
+echo recording
+open hdz_9048.ts
+wait 3000
+pause
+label recording 60Hz
+wait 1500
+grab rec60
+wait 1500
+exit
+label

@@ -1,0 +1,100 @@
+# 写真は不要です（約 2 分）。60Hz で止めた画面を取り込み画像 (grab/*.nv21) で調べます。
+# ディスプレイのガンマ表で「ライブ側の透明色」(明るさ 125 の灰色) を出せなくできるかの試し。
+# 途中で色が反転したりする画面がありますが、すぐ戻ります。
+size frame
+shell ls /sys/class/disp/disp/attr
+pbdisplay 60
+open /mnt/extsd/keytest.ts
+wait 1500
+pause
+label G0 gamma off
+pbgamma 0
+wait 1000
+grab k_g0
+label G1 gamma identity
+pbgamma 1
+wait 1000
+grab k_g1
+label G2 gamma all 125>126
+pbgamma 2
+wait 1000
+grab k_g2
+label G3 gamma all 127>128
+pbgamma 3
+wait 1000
+grab k_g3
+label G4 gamma hi 125>126
+pbgamma 4
+wait 1000
+grab k_g4
+label G5 gamma lo 125>126
+pbgamma 5
+wait 1000
+grab k_g5
+label G6 gamma all inverted
+pbgamma 6
+wait 1000
+grab k_g6
+label G7 gamma hi inverted
+pbgamma 7
+wait 1000
+grab k_g7
+label G8 gamma mid inverted
+pbgamma 8
+wait 1000
+grab k_g8
+pbgamma 0
+label C1 range 16-235
+pbcolor 1
+wait 1000
+grab k_c1
+label C2 range 0-255
+pbcolor 2
+wait 1000
+grab k_c2
+label C3 range default
+pbcolor 3
+wait 1000
+grab k_c3
+pbcolor 0
+exit
+wait 1000
+
+echo recording
+open hdz_9048.ts
+wait 3000
+pause
+label R0 gamma off
+wait 1000
+grab r_g0
+label R2 gamma all 125>126
+pbgamma 2
+wait 1000
+grab r_g2
+label R4 gamma hi 125>126
+pbgamma 4
+wait 1000
+grab r_g4
+label R5 gamma lo 125>126
+pbgamma 5
+wait 1000
+grab r_g5
+label R3 gamma all 127>128
+pbgamma 3
+wait 1000
+grab r_g3
+pbgamma 0
+label P0 playing, gamma off
+play
+wait 1000
+grab p_g0a
+grab p_g0b
+label P2 playing, gamma all 125>126
+pbgamma 2
+wait 500
+grab p_g2a
+grab p_g2b
+pbgamma 0
+pause
+exit
+label
