@@ -1,0 +1,126 @@
+#!/bin/sh
+# 1 枚のカードで Goggle 2 (自分の) と借り物の Goggle v1 を起動し分ける。
+# SD カードに develop.sh という名前でコピーして使う。フラッシュには何も書かない。
+#
+#   Goggle 2 -> /mnt/extsd/develop.g2.sh をそのまま実行する (それまでの
+#               develop.sh を改名したもの。中身は触らない)
+#   Goggle v1 -> /mnt/extsd/HDZGOGGLE.v1 (../hdzero-goggle-9.5 のビルド) を起動する。
+#               無ければ純正。起動しなければ 8 秒後に純正。
+#
+# 機種は内蔵の純正アプリで見分ける。
+#   /mnt/app/platform (9.6 以降の純正にある) が HDZGOGGLE2 -> Goggle 2
+#   platform が無く、純正アプリに goggle2 の文字列が大文字小文字を問わず
+#   ある -> Goggle 2。9.5.1 系の Goggle 2 用は "HDZERO_GOGGLE2" (大文字) だけ、
+#   9.6 以降は hardware-goggle2.c など。
+#   platform が無く、その文字列も無い -> v1。v9.5.0 のソースには goggle2 が
+#   大文字小文字とも一つも無い (git grep -i で確認)。
+#   platform があって HDZGOGGLE2 以外 (9.6 以降の Goggle 1 や Box Pro) ->
+#   どちら用でもない。純正を起動するだけ。
+# 最初の版は小文字の goggle2 しか見ておらず、9.5.1 系の Goggle 2 を v1 と
+# 取り違えるところだった。見分けた結果は model-history.txt に残す。
+# v1 側はバイナリの名前も分けてある (HDZGOGGLE は Goggle 2 用のまま)。
+
+STOCK=/mnt/app/app/HDZGOGGLE
+PLATFORM=$(cat /mnt/app/platform 2>/dev/null)
+if [ "$PLATFORM" = HDZGOGGLE2 ]; then
+	MODEL=g2
+elif [ -n "$PLATFORM" ]; then
+	MODEL=other
+elif grep -qi goggle2 "$STOCK"; then
+	MODEL=g2
+else
+	MODEL=v1
+fi
+( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) 2>/dev/null
+
+if [ "$MODEL" = g2 ]; then
+	if [ -e /mnt/extsd/develop.g2.sh ]; then
+		exec /bin/sh /mnt/extsd/develop.g2.sh
+	fi
+	"$STOCK" &
+	exit 0
+fi
+if [ "$MODEL" != v1 ]; then
+	"$STOCK" &
+	exit 0
+fi
+
+# ここから Goggle v1。develop.sh.stage1 と同じ手順に、起動しなかったときの
+# 純正へのフォールバックを足したもの。
+
+# カードが書けるかを最初に確かめる。書けないカードでログへのリダイレクトが
+# 失敗すると、シェルはそのコマンド (アプリの起動) を実行しない。
+LOG=/mnt/extsd/HDZGOGGLE.log
+WRITABLE=0
+if ( : > /mnt/extsd/.wtest ) 2>/dev/null; then
+	rm -f /mnt/extsd/.wtest
+	WRITABLE=1
+fi
+
+# 前回のログがまだ残っているなら、前回はアプリが boot-logs/ への退避に
+# 到達しなかった印。この後の "> $LOG" が消すので、先に名前を変えて残す。
+save_unrotated_log() {
+	[ -s "$LOG" ] || return 0
+	mkdir -p /mnt/extsd/boot-logs
+	n=1
+	while [ -e "/mnt/extsd/boot-logs/HDZGOGGLE.unrotated.$n.log" ]; do
+		n=$((n + 1))
+	done
+	mv "$LOG" "/mnt/extsd/boot-logs/HDZGOGGLE.unrotated.$n.log"
+}
+
+start_app() {
+	if [ "$WRITABLE" = "1" ]; then
+		"$1" > "$LOG" 2>&1 &
+	else
+		"$1" &
+	fi
+}
+
+# アプリは fork して親が抜けるので $! は当てにならない。名前で探す。
+app_pid() {
+	for d in /proc/[0-9]*; do
+		if grep -qs HDZGOGGLE "$d/cmdline" 2>/dev/null; then
+			echo "${d#/proc/}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# 起動しなかったときの保険。ローダが何かを解決できないと、何も表示されない
+# まま止まる。そうなったら純正に戻す。
+fallback_if_dead() {
+	sleep 8
+	if app_pid > /dev/null; then
+		return 0
+	fi
+	[ "$WRITABLE" = "1" ] && echo "v1: fork が起動しなかったので純正で起動" >> "$B/stage-history.txt" && sync
+	/mnt/app/app/HDZGOGGLE &
+}
+
+# 返却前に書き戻すための、借りた時点の setting.ini。すでにあれば (Mac の
+# 控えから入れたものを含めて) 触らない。
+B=/mnt/extsd/goggle-backup
+
+if [ "$WRITABLE" = "1" ]; then
+	save_unrotated_log
+	mkdir -p "$B"
+	if [ ! -e "$B/setting.ini.orig" ]; then
+		cp /mnt/app/setting.ini "$B/setting.ini.orig"
+	fi
+	cp /mnt/app/setting.ini "$B/setting.ini.last-boot"
+	echo "dual v1 ran" >> "$B/stage-history.txt"
+	sync
+fi
+
+if [ -e /mnt/extsd/HDZGOGGLE.v1 ]; then
+	APP=/mnt/extsd/HDZGOGGLE.v1
+else
+	APP=/mnt/app/app/HDZGOGGLE
+fi
+
+start_app "$APP"
+if [ "$APP" = /mnt/extsd/HDZGOGGLE.v1 ]; then
+	fallback_if_dead &
+fi

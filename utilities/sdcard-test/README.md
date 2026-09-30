@@ -90,6 +90,24 @@ v1 では `hardware-goggle.c` の async display / tuner standby がスタブ
 SoC の TWI2 クロックレジスタを aww で書いて読み戻し、元に戻す。揮発性で
 フラッシュには残らない。
 
+### 5b. 1 枚のカードを Goggle 2 と v1 で使い回す (develop.sh.dual)
+
+`develop.sh.dual` を develop.sh にすると、内蔵の純正アプリで機種を見分けて
+起動し分ける。Goggle 2 ではそれまでの develop.sh (`develop.g2.sh` に改名して置く)
+を中身そのままで実行し、v1 では `HDZGOGGLE.v1` を起動する。`HDZGOGGLE` は
+Goggle 2 用のままなので、v1 で Goggle 2 用のバイナリが動くことはない。
+
+    cp /Volumes/<SD>/develop.sh                    /Volumes/<SD>/develop.g2.sh   # 最初だけ
+    cp utilities/sdcard-test/develop.sh.dual        /Volumes/<SD>/develop.sh
+    cp ../hdzero-goggle-9.5/out/HDZGOGGLE           /Volumes/<SD>/HDZGOGGLE.v1
+    mkdir -p /Volumes/<SD>/goggle-backup                                        # 原本の控えを先に入れる
+    cp logs/goggle-v1/20260916-115451/goggle-backup/setting.ini.orig /Volumes/<SD>/goggle-backup/
+    utilities/sdcard-test/check-sd.sh /Volumes/<SD>
+
+check-sd.sh は両機用のとき、HDZGOGGLE.v1 が 9.5 ベースのビルドと同一で goggle2 の
+文字列を含まないこと、setting.ini.orig が借りた日の原本 (5eb27b713a) と同じことも見る。
+v1 の新しいプレーヤの確認は `autotest.v1.txt` を autotest.txt としてカードに置く。
+
 ### 6. 返却前
 
     cp utilities/sdcard-test/develop.sh.restore /Volumes/<SD>/develop.sh

@@ -9,6 +9,9 @@
 #      (これが唯一の「壊す」経路。develop.sh より前に、確認なしで走る)
 #   2. develop.sh が sh から実行できる形であること (LF 改行、#!/bin/sh)
 #   3. HDZGOGGLE が ARM の ELF で、手元のビルド成果物と同一であること
+#   4. 両機用 (develop.sh.dual) なら、v1 用の HDZGOGGLE.v1 が 9.5 ベースの
+#      ビルドと同一で Goggle 2 用ではないこと、持ち主の setting.ini の控えが
+#      原本と同じであること
 # 何か引っかかれば非 0 で終わる。
 
 SD=${1:?usage: check-sd.sh /Volumes/<SDカード>}
@@ -19,6 +22,12 @@ BUILT=""
 for cand in "$ROOT/../hdzero-goggle-9.5/out/HDZGOGGLE" "$ROOT/build_goggle/out/HDZGOGGLE"; do
 	if [ -f "$cand" ]; then BUILT="$cand"; break; fi
 done
+# 両機用の develop.sh では HDZGOGGLE は Goggle 2 用、v1 用は HDZGOGGLE.v1。
+BUILT_G2="$ROOT/../hdzero-goggle/build_goggle2/out/HDZGOGGLE"
+BUILT_V1="$ROOT/../hdzero-goggle-9.5/out/HDZGOGGLE"
+# 借りた日に取った持ち主の setting.ini (Mac に 7 つある控えはすべてこれ)。
+ORIG_SHA=5eb27b713aa1284193888fefdb57928456b7cdb5
+DUAL=0
 fail=0
 
 say()  { printf '  %s\n' "$*"; }
@@ -71,8 +80,13 @@ else
 	else
 		ng "1 行目が #!/bin/sh ではない: $(head -1 "$D")"
 	fi
+	if grep -q 'develop.g2.sh' "$D"; then
+		DUAL=1
+	fi
 	if grep -q "HDZGOGGLE" "$D"; then
-		if grep -q 'ab-logs' "$D"; then
+		if [ $DUAL -eq 1 ]; then
+			say "種別: 両機用 (Goggle 2 は develop.g2.sh、v1 は HDZGOGGLE.v1)"
+		elif grep -q 'ab-logs' "$D"; then
 			say "種別: 純正と fork を交互に起動する測定用 (abtest)"
 		elif grep -q '/mnt/extsd/HDZGOGGLE ' "$D" || grep -q '/mnt/extsd/HDZGOGGLE$' "$D"; then
 			say "種別: fork を SD から起動する (stage1)"
@@ -107,6 +121,76 @@ else
 fi
 echo
 
+if [ $DUAL -eq 1 ]; then
+	G="$SD/develop.g2.sh"
+	if [ ! -f "$G" ]; then
+		say "develop.g2.sh が無い。Goggle 2 では純正が起動する"
+	else
+		if LC_ALL=C grep -q "$(printf '\r')" "$G"; then
+			ng "develop.g2.sh に CR (\\r) が含まれる"
+		fi
+		if grep -q 'mtd_debug\|fw_setenv\|ota-burn\|/dev/mtd\|write_flashes\|update_goggle\|update_vtx\|gogglecmd' "$G"; then
+			ng "develop.g2.sh にフラッシュ書き込み系のコマンドが含まれる"
+		else
+			ok "develop.g2.sh (Goggle 2 側) にフラッシュ書き込み系のコマンドは無い"
+		fi
+	fi
+	echo
+
+	echo "== 3. HDZGOGGLE.v1 (v1 で起動する fork) =="
+	A="$SD/HDZGOGGLE.v1"
+	if [ ! -f "$A" ]; then
+		say "無い。v1 では純正アプリが起動する"
+	else
+		if file "$A" | grep -q 'ELF 32-bit LSB.*ARM'; then
+			ok "ARM 32bit ELF"
+		else
+			ng "ARM の ELF ではない: $(file "$A")"
+		fi
+		if strings "$A" | grep -q goggle2; then
+			ng "goggle2 の文字列がある: Goggle 2 用のバイナリ。v1 では動かさない"
+		else
+			ok "Goggle 2 用の文字列は無い"
+		fi
+		if [ -f "$BUILT_V1" ] && [ "$(md5 -q "$A")" = "$(md5 -q "$BUILT_V1")" ]; then
+			ok "$BUILT_V1 と同一"
+		else
+			ng "$BUILT_V1 と違う (古いビルド? コピー忘れ?)"
+		fi
+	fi
+	echo
+
+	echo "== 4. 持ち主の setting.ini の控え =="
+	O="$SD/goggle-backup/setting.ini.orig"
+	if [ ! -f "$O" ]; then
+		ng "goggle-backup/setting.ini.orig が無い。このまま v1 で起動すると fork が変えた後の設定を原本として控えてしまう。Mac の logs/goggle-v1/*/goggle-backup/setting.ini.orig を先に入れる"
+	elif [ "$(shasum "$O" | cut -d' ' -f1)" = "$ORIG_SHA" ]; then
+		ok "借りた日の原本と同じ (${ORIG_SHA%${ORIG_SHA#??????????}})"
+	else
+		ng "借りた日の原本 (${ORIG_SHA%${ORIG_SHA#??????????}}) と違う"
+	fi
+	echo
+
+	echo "== 5. HDZGOGGLE (Goggle 2 で起動する fork) =="
+	A="$SD/HDZGOGGLE"
+	if [ -f "$A" ]; then
+		if strings "$A" | grep -q goggle2; then
+			ok "Goggle 2 用 (v1 では起動されない)"
+		else
+			ng "Goggle 2 用ではない。両機用の develop.sh では HDZGOGGLE は Goggle 2 で起動される"
+		fi
+		if [ -f "$BUILT_G2" ] && [ "$(md5 -q "$A")" = "$(md5 -q "$BUILT_G2")" ]; then
+			ok "$BUILT_G2 と同一"
+		else
+			say "$BUILT_G2 と違う (Goggle 2 側。v1 の試験には関係しない)"
+		fi
+	else
+		say "無い。Goggle 2 では develop.g2.sh の決めた通り (純正にフォールバック)"
+	fi
+	echo
+fi
+
+if [ $DUAL -eq 0 ]; then
 echo "== 3. HDZGOGGLE (fork バイナリ) =="
 A="$SD/HDZGOGGLE"
 if [ ! -f "$A" ]; then
@@ -131,6 +215,7 @@ else
 	fi
 fi
 echo
+fi
 
 if [ $fail -eq 0 ]; then
 	echo "OK: このまま挿してよい"

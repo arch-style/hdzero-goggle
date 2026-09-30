@@ -1,0 +1,117 @@
+# 借り物の Goggle v1 で新しいプレーヤ (fast-switch-9.5-player) を確かめる。約 2 分半。
+# 写真は不要。バーの左下に A..F の印が出るので、おかしな所があればその印で教えてください。
+#   A) 720p の録画を 60Hz (720 行) で再生、止めてコマ送り・戻し、再開、1/2・1/4
+#   B) 透け (OSD の透明色) の確認用テスト画像を、消し込みなし→ありで取り込み
+#   C) 1080p のテスト動画で 1080 行に切り替え
+#   D) 音のある mp4 (イヤホンがあれば Line Out で)
+#   E) 50Hz (メニューと同じ表示) での再生
+#   F) 最後に一度だけ 60Hz の 720p に戻って終了
+# 終わると ピッ・ピッ・ピッ・ピー。その後はいつもの再生メニューから録画を何本か
+# 再生し、右ボタンのメニュー (ステップ幅・速度) も触ってみてください。
+
+shell cat /proc/asound/cards
+fpga dump
+size frame
+pbdisplay 60
+
+echo A 720p recording at 60Hz
+open hdz_9048.ts
+wait 3000
+label A 720p 60Hz
+shell cat /sys/class/disp/disp/attr/sys
+fpga dump
+wait 5000
+pause
+wait 500
+grab a720_paused
+stepgap 300
+step +5
+step -5
+play
+waitresume
+wait 3000
+speed 2
+wait 3000
+speed 4
+wait 3000
+speed 1
+wait 3000
+pause
+wait 400
+exit
+wait 800
+
+echo B keytest, clearing off then on
+pbclear 0
+open /mnt/extsd/keytest.ts
+wait 2000
+label B clear off
+pause
+wait 500
+grab b_key_off
+exit
+wait 500
+pbclear 1
+open /mnt/extsd/keytest.ts
+wait 2000
+label B clear on
+pause
+wait 500
+grab b_key_on
+exit
+wait 800
+
+echo C 1080p clip
+open /mnt/extsd/hd1080.ts
+wait 3000
+label C 1080p 60Hz
+shell cat /sys/class/disp/disp/attr/sys
+wait 5000
+pause
+wait 500
+grab c1080_paused
+step +3
+step -3
+play
+waitresume
+wait 2000
+exit
+wait 800
+
+echo D mp4 with sound
+open hdz_9003.mp4
+wait 3000
+label D mp4 sound
+mixer
+wait 5000
+pause
+wait 1000
+play
+waitresume
+wait 4000
+exit
+wait 800
+
+echo E 50Hz like the menu
+pbdisplay 50
+open hdz_9048.ts
+wait 3000
+label E 50Hz
+wait 5000
+pause
+wait 400
+step +3
+play
+waitresume
+wait 2000
+exit
+wait 800
+
+echo F back to 60Hz 720p
+pbdisplay 60
+open hdz_0012.ts
+wait 3000
+label F 720p again
+wait 5000
+exit
+label
