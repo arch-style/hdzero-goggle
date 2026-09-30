@@ -127,6 +127,20 @@ set(SRC_FILES
 	${SRC_FILES_LANG}
 )
 
+# The translations go inside the app (see language_init()): generated from
+# mkapp/app/language at build time, so the app does not depend on the ones the
+# goggle's own firmware carries.
+file(GLOB LANG_INI_FILES "${CMAKE_CURRENT_SOURCE_DIR}/mkapp/app/language/*.ini")
+set(LANG_BUILTIN_C "${CMAKE_CURRENT_BINARY_DIR}/language_builtin.c")
+add_custom_command(
+	OUTPUT ${LANG_BUILTIN_C}
+	COMMAND ${CMAKE_COMMAND} -DIN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/mkapp/app/language
+		-DOUT=${LANG_BUILTIN_C} -P ${CMAKE_CURRENT_SOURCE_DIR}/src/lang/embed_languages.cmake
+	DEPENDS ${LANG_INI_FILES} ${CMAKE_CURRENT_SOURCE_DIR}/src/lang/embed_languages.cmake
+	COMMENT "Embedding the translations"
+)
+list(APPEND SRC_FILES ${LANG_BUILTIN_C})
+
 if(EMULATOR_BUILD)
 	list(APPEND SRC_FILES ${SRC_FILES_EMULATOR})
 else()

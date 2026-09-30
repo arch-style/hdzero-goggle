@@ -448,7 +448,8 @@ static bool fpga_old_clocks(void) {
         int va = I2C_Read(ADDR_FPGA, 0xff);
 
         old = va < FPGA_VA_NEW_CLOCKS;
-        LOGI("fpga: va %d, %s HDMI in and AV clock phases", va, old ? "9.5.1" : "9.6");
+        LOGI("fpga: va %d, %s's where the two differ (HDMI in and AV clocks, 1080p24, HAN check)",
+             va, old ? "9.5.1" : "9.6");
     }
     return old;
 }
@@ -970,7 +971,9 @@ void Display_1080P24_t(int mode) {
     vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30, 0);
     pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30);
 
-    I2C_Write(ADDR_FPGA, 0x80, 0x04);
+    // 9.6 changed this from 0x84 along with its FPGA; the older FPGA keeps
+    // 9.5.1's.
+    I2C_Write(ADDR_FPGA, 0x80, fpga_old_clocks() ? 0x84 : 0x04);
     // I2C_Write(ADDR_FPGA, 0x84, 0x00); // close OSD
 
     DM5680_SetFPS(mode);
@@ -1700,6 +1703,16 @@ int Get_HAN_status() // ret: 0=error; 1=ok
 {
     uint8_t r18 = 0;
     uint8_t r19 = 0;
+
+    if (fpga_old_clocks()) {
+        // 9.5.1's check, for its FPGA: 9.6's reads 0x19 as well and expects
+        // values only its own FPGA gives, so the self test failed here.
+        I2C_Write(ADDR_FPGA, 0x81, 0x01);
+        usleep(10000);
+        r18 = I2C_Read(ADDR_FPGA, 0x18);
+        I2C_Write(ADDR_FPGA, 0x81, 0x00);
+        return r18 >= 0xE4 && r18 <= 0xE7;
+    }
 
     I2C_Write(ADDR_FPGA, 0x81, 0x01);
     sleep(1);
