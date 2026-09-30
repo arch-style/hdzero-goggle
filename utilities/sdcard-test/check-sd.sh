@@ -9,7 +9,7 @@
 #      (これが唯一の「壊す」経路。develop.sh より前に、確認なしで走る)
 #   2. develop.sh が sh から実行できる形であること (LF 改行、#!/bin/sh)
 #   3. HDZGOGGLE が ARM の ELF で、手元のビルド成果物と同一であること
-#   4. 両機用 (develop.sh.dual) なら、v1 用の HDZGOGGLE.v1 が 9.5 ベースの
+#   4. 両機用 (develop.sh.dual) なら、v1 用の HDZGOGGLE.v1 が build_goggle の
 #      ビルドと同一で Goggle 2 用ではないこと、持ち主の setting.ini の控えが
 #      原本と同じであること
 # 何か引っかかれば非 0 で終わる。
@@ -24,7 +24,7 @@ for cand in "$ROOT/../hdzero-goggle-9.5/out/HDZGOGGLE" "$ROOT/build_goggle/out/H
 done
 # 両機用の develop.sh では HDZGOGGLE は Goggle 2 用、v1 用は HDZGOGGLE.v1。
 BUILT_G2="$ROOT/../hdzero-goggle/build_goggle2/out/HDZGOGGLE"
-BUILT_V1="$ROOT/../hdzero-goggle-9.5/out/HDZGOGGLE"
+BUILT_V1="$ROOT/../hdzero-goggle/build_goggle/out/HDZGOGGLE"
 # 借りた日に取った持ち主の setting.ini (Mac に 7 つある控えはすべてこれ)。
 ORIG_SHA=5eb27b713aa1284193888fefdb57928456b7cdb5
 DUAL=0
@@ -147,10 +147,15 @@ if [ $DUAL -eq 1 ]; then
 		else
 			ng "ARM の ELF ではない: $(file "$A")"
 		fi
-		if strings "$A" | grep -q goggle2; then
-			ng "goggle2 の文字列がある: Goggle 2 用のバイナリ。v1 では動かさない"
+		# どちら用かはビルドに残るドライバのソース名で見る。言語ファイルを
+		# 埋め込んでからは v1 用にも "HDZERO_GOGGLE2" (訳文) が入るので、
+		# goggle2 の文字列の有無では見分けられない。
+		if strings "$A" | grep -q 'driver/hardware-goggle2\.c'; then
+			ng "hardware-goggle2.c が入っている: Goggle 2 用のバイナリ。v1 では動かさない"
+		elif strings "$A" | grep -q 'driver/hardware-goggle\.c\|driver/hardware\.c'; then
+			ok "v1 用 (Goggle 2 のドライバは入っていない)"
 		else
-			ok "Goggle 2 用の文字列は無い"
+			ng "どちら用か分からない (ドライバのソース名が見つからない)"
 		fi
 		if [ -f "$BUILT_V1" ] && [ "$(md5 -q "$A")" = "$(md5 -q "$BUILT_V1")" ]; then
 			ok "$BUILT_V1 と同一"
@@ -174,7 +179,7 @@ if [ $DUAL -eq 1 ]; then
 	echo "== 5. HDZGOGGLE (Goggle 2 で起動する fork) =="
 	A="$SD/HDZGOGGLE"
 	if [ -f "$A" ]; then
-		if strings "$A" | grep -q goggle2; then
+		if strings "$A" | grep -q 'driver/hardware-goggle2\.c'; then
 			ok "Goggle 2 用 (v1 では起動されない)"
 		else
 			ng "Goggle 2 用ではない。両機用の develop.sh では HDZGOGGLE は Goggle 2 で起動される"

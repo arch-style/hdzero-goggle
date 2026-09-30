@@ -4,8 +4,10 @@
 #
 #   Goggle 2 -> /mnt/extsd/develop.g2.sh をそのまま実行する (それまでの
 #               develop.sh を改名したもの。中身は触らない)
-#   Goggle v1 -> /mnt/extsd/HDZGOGGLE.v1 (../hdzero-goggle-9.5 のビルド) を起動する。
-#               無ければ純正。起動しなければ 8 秒後に純正。
+#   Goggle v1 -> /mnt/extsd/HDZGOGGLE.v1 (build_goggle のビルド) を RAM (/tmp) に
+#               コピーして起動する。無ければ純正。起動しなければ 8 秒後に純正。
+#               v1 に入っているのが 9.5.0 でも 9.6 でもよい (アプリが FPGA の版を
+#               見て合わせる)。
 #
 # 機種は内蔵の純正アプリで見分ける。
 #   /mnt/app/platform (9.6 以降の純正にある) が HDZGOGGLE2 -> Goggle 2
@@ -14,8 +16,8 @@
 #   9.6 以降は hardware-goggle2.c など。
 #   platform が無く、その文字列も無い -> v1。v9.5.0 のソースには goggle2 が
 #   大文字小文字とも一つも無い (git grep -i で確認)。
-#   platform があって HDZGOGGLE2 以外 (9.6 以降の Goggle 1 や Box Pro) ->
-#   どちら用でもない。純正を起動するだけ。
+#   platform が HDZGOGGLE (9.6 以降の Goggle 1) -> v1。
+#   platform がそれ以外 (Box Pro など) -> どちら用でもない。純正を起動するだけ。
 # 最初の版は小文字の goggle2 しか見ておらず、9.5.1 系の Goggle 2 を v1 と
 # 取り違えるところだった。見分けた結果は model-history.txt に残す。
 # v1 側はバイナリの名前も分けてある (HDZGOGGLE は Goggle 2 用のまま)。
@@ -24,6 +26,8 @@ STOCK=/mnt/app/app/HDZGOGGLE
 PLATFORM=$(cat /mnt/app/platform 2>/dev/null)
 if [ "$PLATFORM" = HDZGOGGLE2 ]; then
 	MODEL=g2
+elif [ "$PLATFORM" = HDZGOGGLE ]; then
+	MODEL=v1
 elif [ -n "$PLATFORM" ]; then
 	MODEL=other
 elif grep -qi goggle2 "$STOCK"; then
@@ -114,13 +118,21 @@ if [ "$WRITABLE" = "1" ]; then
 	sync
 fi
 
+# カードから直接実行すると、抜き差しした後にアプリがまだ読んでいない部分を
+# 読みに行ったところで SIGBUS で落ちる (Goggle 2 で 2026-09-30 に実際に起きた。
+# develop.sh.vopatch を参照)。RAM (/tmp は tmpfs) にコピーしてそこから実行する。
+# コピーに失敗したらカードから。
 if [ -e /mnt/extsd/HDZGOGGLE.v1 ]; then
 	APP=/mnt/extsd/HDZGOGGLE.v1
+	if cp /mnt/extsd/HDZGOGGLE.v1 /tmp/HDZGOGGLE && chmod +x /tmp/HDZGOGGLE; then
+		APP=/tmp/HDZGOGGLE
+	fi
 else
 	APP=/mnt/app/app/HDZGOGGLE
 fi
+[ "$WRITABLE" = "1" ] && echo "v1: app $APP" >> "$B/stage-history.txt" && sync
 
 start_app "$APP"
-if [ "$APP" = /mnt/extsd/HDZGOGGLE.v1 ]; then
+if [ "$APP" != /mnt/app/app/HDZGOGGLE ]; then
 	fallback_if_dead &
 fi
