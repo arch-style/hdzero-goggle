@@ -514,7 +514,13 @@ void csic_pclk_invert_set(uint8_t is_invert) {
 void pclk_phase_set(video_source_t source) {
     LOGI("pclk_phase_set %d", pclk_phase[source]);
     // bit[0] hdmi in
-    IT66021_Set_Pclk((pclk_phase[source] >> 0) & 1, 0);
+    // 9.5.0's values for the v1 (0xA2 inverted, 0xB2 not). 9.6 changed
+    // IT66021_Set_Pclk() to 0xB2/0xA1 along with the goggle 2's new FPGA (d2dea35)
+    // and the v1 took it without its FPGA being retuned for it, so the v1 keeps
+    // 9.5.0's, whichever FPGA it has. The page select first, which 9.5.0
+    // left to chance.
+    IT66021_Mask_WR(0, 0x0f, 0x03, 0x00);
+    I2C_L_Write(ADDR_IT66021, 0x50, ((pclk_phase[source] >> 0) & 1) ? 0xA2 : 0xB2);
 
     // bit[1] analog in
     TP2825_Set_Pclk((pclk_phase[source] >> 1) & 1);
@@ -531,12 +537,27 @@ void pclk_phase_set(video_source_t source) {
     // bit[6] oled
     I2C_Write(ADDR_AL, 0x14, (pclk_phase[source] >> 6) & 1);
 }
+// The FPGA's version (VA), read once. A v1 may have 9.5.0's (VA 200) or 9.6's
+// (VA 206) installed, and run from the card this app meets either. Between
+// the two only features were added (205 the HDMI in REC dot, 206 1080p24's
+// latency lock); the phases and geometry are the same.
+int fpga_va(void) {
+    static int va = -1;
+
+    if (va < 0) {
+        va = I2C_Read(ADDR_FPGA, 0xff);
+        LOGI("fpga: va %d%s", va, va < 205 ? ", no HDMI in REC dot" : va < 206 ? ", no 1080p24 latency lock" : "");
+    }
+    return va;
+}
+
 void hw_stat_init() {
     g_hw_stat.source_mode = SOURCE_MODE_UI;
     g_hw_stat.vdpo_tmg = VDPO_TMG_1080P50;
 
     g_hw_stat.hdz_bw = 0;
     g_hw_stat.hdzero_open = 0;
+    g_hw_stat.hdz_standby = 0;
     g_hw_stat.m0_open = 0;
 
     g_hw_stat.is_av_in = 1;
@@ -556,7 +577,10 @@ void Display_VO_SWITCH(uint8_t sel) // 0 = UI;  1 = HDZERO or AV_in or HDMI_in
 
     if (sel && g_hw_stat.hdzero_open && (g_hw_stat.source_mode == SOURCE_MODE_HDZERO))
         DM6302_openM0(1);
-    else
+    else if (!HDZero_open_pending())
+        // While an async open is outstanding this would push an SPI sequence
+        // into the middle of the init for no gain: DM6302_M0() leaves the
+        // register at zero anyway (as on the goggle 2).
         DM6302_openM0(0);
 
     I2C_Write(ADDR_FPGA, 0x06, 0x0F);
@@ -569,11 +593,20 @@ void hw_screen_on(int bON) {
 }
 
 void Display_UI_init() {
+    // The boot call configures the display for the menu, and the switch to the
+    // last source immediately reconfigures it for the video, paying dispw's
+    // second twice over. Skipping the first one leaves the boot UI on whatever
+    // mode the kernel set up (as on the goggle 2).
+    static bool first_call = true;
+    bool skip_timing = first_call && g_setting.speed.boot_display;
+
+    first_call = false;
+
     g_hw_stat.source_mode = SOURCE_MODE_UI;
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
-    system_exec("dispw -s vdpo 1080p50");
-    g_hw_stat.vdpo_tmg = VDPO_TMG_1080P50;
+    if (!skip_timing)
+        vdpo_set_timing(VDPO_TMG_1080P50, "1080p50");
     Display_VO_SWITCH(0);
 
     vclk_phase_set(VIDEO_SOURCE_MENU_UI, 0);
@@ -586,14 +619,23 @@ void Display_UI_init() {
     system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
-void Display_UI() {
+void Display_UI_then(void (*before_on)(void)) {
     pthread_mutex_lock(&hardware_mutex);
+    LOGI("switch mark: Display_UI start");
     screen.display(0);
-
+    LOGI("switch mark: oled off");
     Display_UI_init();
+    LOGI("switch mark: vdpo reconfigured");
 
+    if (before_on)
+        before_on();
     screen.display(1);
+    LOGI("switch mark: oled on");
     pthread_mutex_unlock(&hardware_mutex);
+}
+
+void Display_UI() {
+    Display_UI_then(NULL);
 }
 
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
@@ -601,8 +643,7 @@ void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
-    system_exec("dispw -s vdpo 720p60");
-    g_hw_stat.vdpo_tmg = VDPO_TMG_720P60;
+    vdpo_set_timing(VDPO_TMG_720P60, "720p60");
     vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P60_50, 0);
     pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P60_50);
 
@@ -628,8 +669,7 @@ void Display_720P90_t(int mode) {
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
-    system_exec("dispw -s vdpo 720p90");
-    g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
+    vdpo_set_timing(VDPO_TMG_720P90, "720p90");
     vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
     pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
     I2C_Write(ADDR_FPGA, 0x80, 0x03);
@@ -650,8 +690,7 @@ void Display_1080P30_t(int mode) {
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
-    system_exec("dispw -s vdpo 1080p60");
-    g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
+    vdpo_set_timing(VDPO_TMG_1080P60, "1080p60");
     vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30, 0);
     pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30);
 
@@ -674,12 +713,14 @@ void Display_1080P24_t(int mode) {
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
-    system_exec("dispw -s vdpo 1080p60");
-    g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
+    vdpo_set_timing(VDPO_TMG_1080P60, "1080p60");
     vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30, 0);
     pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_1080P30);
 
-    I2C_Write(ADDR_FPGA, 0x80, 0x84);
+    // Bit 7 is 1080p24's latency lock, which came with VA 206 (b0cad8c): an
+    // older FPGA gets 1080p30's value. The mode itself needs RX 77, so a v1
+    // still all on 9.5.0 never gets here.
+    I2C_Write(ADDR_FPGA, 0x80, fpga_va() >= 206 ? 0x84 : 0x04);
     // I2C_Write(ADDR_FPGA, 0x84, 0x00); // close OSD
 
     DM5680_SetFPS(mode);
@@ -718,28 +759,7 @@ void Display_1080P30(int mode) {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
-void HDZero_open(int bw) {
-    if (bw != g_hw_stat.hdz_bw) // reopen with different bw
-        HDZero_Close();
-
-    if (g_hw_stat.hdzero_open == 0) {
-        g_hw_stat.hdz_bw = bw;
-        DM5680_SetBR(g_hw_stat.hdz_bw);
-        DM6302_init(0, g_hw_stat.hdz_bw);
-        DM5680_SetBB(1);
-        g_hw_stat.hdzero_open = 1;
-        LOGI("HDZero: open");
-    }
-}
-
-void HDZero_Close() {
-    DM5680_SetBB(0);
-    DM5680_ResetRF(0);
-    g_hw_stat.hdzero_open = 0;
-    g_hw_stat.m0_open = 0;
-
-    LOGI("HDZero: close");
-}
+// HDZero_open(), HDZero_Close() and HDZero_Standby(): hardware-fastswitch.c.
 
 int HDZERO_detect() // return = 1: vtmg to V536 changed
 {
@@ -807,12 +827,10 @@ int HDZERO_detect() // return = 1: vtmg to V536 changed
 
 void AV_Mode_Switch_fpga(int is_pal) {
     if (is_pal) {
-        system_exec("dispw -s vdpo 720p50");
-        g_hw_stat.vdpo_tmg = VDPO_TMG_720P50;
+        vdpo_set_timing(VDPO_TMG_720P50, "720p50");
         I2C_Write(ADDR_FPGA, 0x80, 0x10);
     } else {
-        system_exec("dispw -s vdpo 720p60");
-        g_hw_stat.vdpo_tmg = VDPO_TMG_720P60;
+        vdpo_set_timing(VDPO_TMG_720P60, "720p60");
         I2C_Write(ADDR_FPGA, 0x80, 0x00);
     }
     I2C_Write(ADDR_FPGA, 0x06, 0x0F);
@@ -1238,22 +1256,5 @@ int Get_HAN_status() // ret: 0=error; 1=ok
 }
 
 
-// ---------------------------------------------------------------------------
-// The fast-switch fork's display-timing and tuner-standby machinery lives in
-// hardware-goggle2.c and has only been run on a Goggle 2. On this target the
-// same entry points exist so the common code links, but they fall back to the
-// stock behaviour: every timing change runs inline and standby is a close.
-bool vdpo_timing_applied(void) { return true; }
-bool vdpo_timing_pending(void) { return false; }
-bool vdpo_timing_running(void) { return false; }
-void vdpo_timing_collect(void) {}
-void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode) {
-    (void)tmg;
-    (void)mode;
-}
-bool HDZero_open_pending(void) { return false; }
-void HDZero_open_async_wait(void) {}
-void HDZero_open_async_start(int bw) { HDZero_open(bw); }
-void HDZero_Standby() { HDZero_Close(); }
 
 #endif

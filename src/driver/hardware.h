@@ -120,6 +120,9 @@ void vdpo_timing_collect(void);
 // Begin a display timing change in the background; the next vdpo_set_timing()
 // for the same timing collects it instead of running dispw itself.
 void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode);
+// For the driver files, under hardware_mutex: set the display timing, running
+// dispw only if it is not already that (and collecting a background one).
+void vdpo_set_timing(vdpo_tmg_t tmg, const char *mode);
 void Display_UI();
 // Display_UI(), running before_on (if any) before the panel is lit again: for
 // a caller whose own part of the switch would show on a lit panel.
@@ -137,6 +140,8 @@ void Display_1080P24(int mode);
 
 void Display_HDZ(int mode, int is_43);
 void Display_Osd(bool enable);
+// Goggle v1: the FPGA's version (register 0xff), read once.
+int fpga_va(void);
 // Goggle 2: the goggle layer over analog video on or off, keeping record.osd.
 void Display_Osd_shown(bool shown, bool record);
 

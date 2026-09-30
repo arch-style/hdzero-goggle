@@ -155,6 +155,11 @@ const char *translate_string(const char *str, lang_e lang) {
         return str;
 
     const struct Language *const language = &languages[lang];
+    // A language whose file could not be read has no table: English, rather
+    // than the NULL dereference that took the app down when a 9.5 firmware's
+    // folder lacked the file and JPN.TXT, SPA.TXT or GER.TXT was on the card.
+    if (!language->translations)
+        return str;
     const size_t keyLength = strlen(str);
     // search str translate
     for (int i = 0; i < TRANSLATE_STRING_NUM; i++) {

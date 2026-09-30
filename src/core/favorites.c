@@ -5,6 +5,13 @@
 #include "ui/page_scannow.h"
 
 favorites_source_t favorites_source(void) {
+#if defined(HDZGOGGLE)
+    // The goggle v1 has no built-in analog receiver, so the HDZero list is the
+    // only one that is ever active. Its setting.ini has no analog_module key,
+    // which reads as INTERNAL, and with the module bay selected the analog
+    // list would have come up.
+    return FAVORITES_SOURCE_HDZERO;
+#endif
     if (g_source_info.source == SOURCE_AV_MODULE &&
         (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL))
         return FAVORITES_SOURCE_ANALOG;

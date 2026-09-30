@@ -129,6 +129,13 @@ void osd_hdmi_in_dvr_update() {
     uint8_t reg;
     static uint8_t last_dvr_is_recording = 0;
 
+#if defined(HDZGOGGLE)
+    // The dot is drawn by the FPGA from VA 205 on (5392389). On 9.5.0's VA 200
+    // bit 0 of 0x8d is not the dot, and 0x8d is the register vclk_phase_set()
+    // writes the clock phase to, so it is left alone there.
+    if (fpga_va() < 205)
+        return;
+#endif
     if (g_source_info.source != SOURCE_HDMI_IN) {
         if (last_dvr_is_recording != 0) {
             osd_show_hdmi_in_dvr(0);

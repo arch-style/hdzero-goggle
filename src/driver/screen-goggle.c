@@ -10,6 +10,7 @@
 
 #include "../core/common.hh"
 #include "../core/defines.h"
+#include "hardware.h"
 #include "i2c.h"
 #include "msp_displayport.h"
 #include "uart.h"
@@ -146,6 +147,13 @@ static void screen_start_up() {
 
 // OLED display on/off
 static void screen_display(bool on) {
+    // A background dispw is rewriting the display output: lighting the panel
+    // into that is what the blank before a mode change exists to avoid.
+    // Whoever collects the change turns the panel on afterwards (as on the
+    // goggle 2, screen-google2.c).
+    if (on && vdpo_timing_pending())
+        return;
+
     if (on) {
         I2C_Write(ADDR_AL, 0x13, 0x83);
         usleep(1000);
