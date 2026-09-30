@@ -21,6 +21,7 @@
 #include "ui/page_common.h"
 #include "ui/ui_porting.h"
 #include "ui/ui_style.h"
+#include "util/time.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // locals
@@ -694,8 +695,10 @@ static void pb_display_fit(const char *fname) {
 void mplayer_release_display(void) {
 #if defined(HDZGOGGLE2)
     if (Display_Playback_lines()) {
-        Display_UI();
-        avplay_restore_ui();
+        // The UI layer is put back to the whole screen before the panel
+        // comes on: after it, the menu showed for a moment in the 1280x720
+        // window the player had shrunk it to.
+        Display_UI_then(avplay_restore_ui);
     }
 #endif
 }
@@ -703,11 +706,26 @@ void mplayer_release_display(void) {
 void mplayer_file(char *fname) {
     LOGI("mplayer %s", fname);
     load_stars(fname);
+#if defined(HDZGOGGLE2)
+    // Dark from here until MPP is up and the UI layer fits the screen again
+    // (see Display_Playback()), whether or not the display is switched: MPP
+    // resets the layer at every open.
+    const uint32_t dark_from = time_ms();
+
+    if (pb_display60)
+        hw_screen_on(0);
+#endif
     pb_display_enter();
     init_mplayer();
 
     pb_ap = avplay_open(fname);
     pb_display_fit(fname);
+#if defined(HDZGOGGLE2)
+    if (pb_display60) {
+        hw_screen_on(1);
+        LOGI("playback: panel on after %ums dark, at %d lines", time_ms() - dark_from, pb_lines);
+    }
+#endif
     if (pb_ap) {
         controller.range = avplay_duration_ms(pb_ap);
         controller.value = avplay_position_ms(pb_ap);

@@ -1,0 +1,191 @@
+# 再生機能の総点検 (約 4 分、見ているだけでよい。イヤホンがあれば D の音も)。
+# バーの左下に A..G の印が出る。おかしな所があれば印で教えてください。
+# 終わると ピッ・ピッ・ピッ・ピー。
+#
+#   A 再生開始の表示切り替え: メニュー(1080p50) → 720 行、720 → 1080 行 (いったん
+#     720 に切り替えてから 1080 に切り替え直す)、1080 → 720、同じ 720 のまま次の
+#     ファイル。どれも切り替えの間は黒で、ズレた画面が見えないこと。ログの
+#     "playback: panel on after" と "UI layer window now" の順番、各回の grab で確かめる
+#   B 操作 (720p60 HEVC): 止める、コマ送り・戻し、1s/5s/10s/30s の送り・戻し、
+#     再開、1/2・1/4・1/8 速度、右ボタンのメニューを開いて閉じる
+#   C 端: 先頭で戻す、末尾を越える送り (最後のコマ)、終端で送る・戻す
+#   D 形式: H.264 TS、640x360、mp4 (H.264 + 音)、アナログ録画 (HEVC)
+#   E HDMI の録画: 1080p60 (途中へ送る)、1080p50、720p 100fps (ラベルは 90)
+#   F 1 秒未満のファイル
+#   G 最後にメニューへ戻る (戻る切り替えの間も黒で、メニューが小さく出ないこと)
+#
+# 取り込んだ画面 (grab/*.nv21) は utilities/sdcard-test/grab-to-png.sh で PNG に。
+
+size frame
+stepgap 200
+
+echo A1 menu to 720 lines
+open hdz_9048.ts
+label A1 720
+wait 2500
+grab a1_720
+wait 1000
+
+echo A2 720 to 1080 lines
+open hdz_9161.ts
+label A2 1080
+wait 2500
+grab a2_1080
+wait 1000
+
+echo A3 1080 to 720 lines
+open hdz_9181.ts
+label A3 720
+wait 2500
+grab a3_720
+wait 1000
+
+echo A4 720 again, no switch
+open hdz_9048.ts
+label A4 720
+wait 2500
+grab a4_720
+wait 1000
+
+echo B controls on 720p60 HEVC
+label B
+wait 3000
+pause
+wait 500
+step +5
+step -5
+size 1s
+up 2
+down 1
+size 5s
+up 2
+down 1
+size 10s
+up 1
+size 30s
+up 1
+down 1
+size frame
+grab b_paused
+play
+waitresume 5000
+wait 2000
+speed 2
+wait 2500
+speed 4
+wait 2500
+speed 8
+wait 2500
+speed 1
+wait 2000
+right
+wait 1500
+right
+wait 1000
+exit
+wait 1000
+
+echo C edges
+open hdz_0018.ts
+label C
+wait 1000
+pause
+size 30s
+down 1
+wait 600
+size frame
+step -2
+step +3
+size 30s
+up 1
+wait 800
+size frame
+step +2
+step -2
+play
+waitresume 5000
+wait 1500
+exit
+wait 1000
+
+echo D1 H.264 TS
+open hdz_9001.ts
+label D1 H264
+wait 4000
+exit
+wait 1000
+
+echo D2 640x360
+open hdz_9002.ts
+label D2 360
+wait 4000
+grab d2_360
+exit
+wait 1000
+
+echo D3 mp4 with sound
+open hdz_9003.mp4
+label D3 mp4
+wait 3000
+pause
+step +1
+play
+waitresume 5000
+wait 3000
+exit
+wait 1000
+
+echo D4 analog recording
+open hdz_9181.ts
+label D4 analog
+wait 4000
+exit
+wait 1000
+
+echo E1 HDMI 1080p60, into the middle
+open hdz_9161.ts
+label E1 1080p60
+wait 2000
+size 30s
+up 8
+waitresume 5000
+wait 4000
+grab e1_1080p60
+size frame
+exit
+wait 1000
+
+echo E2 HDMI 1080p50
+open hdz_9165.ts
+label E2 1080p50
+wait 4000
+exit
+wait 1000
+
+echo E3 HDMI 720p 100fps
+open hdz_9173.ts
+label E3 720p100
+wait 2000
+size 30s
+up 6
+waitresume 5000
+wait 5000
+grab e3_720p100
+size frame
+exit
+wait 1000
+
+echo F tiny
+open hdz_9054.ts
+label F
+wait 1500
+exit
+wait 1000
+
+echo G back to the menu
+open hdz_9048.ts
+label G
+wait 3000
+exit
+wait 2000
+echo done

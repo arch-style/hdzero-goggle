@@ -121,6 +121,9 @@ void vdpo_timing_collect(void);
 // for the same timing collects it instead of running dispw itself.
 void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode);
 void Display_UI();
+// Display_UI(), running before_on (if any) before the panel is lit again: for
+// a caller whose own part of the switch would show on a lit panel.
+void Display_UI_then(void (*before_on)(void));
 // The player's 60Hz display (goggle 2 only; see hardware-goggle2.c) at 720 or
 // 1080 lines, and which of them is up, 0 for neither: any return to the
 // menu's display ends it.

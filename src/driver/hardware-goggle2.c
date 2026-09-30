@@ -806,7 +806,7 @@ void Display_UI_init() {
     system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
-void Display_UI() {
+void Display_UI_then(void (*before_on)(void)) {
     pthread_mutex_lock(&hardware_mutex);
     LOGI("switch mark: Display_UI start");
     screen.display(0);
@@ -814,9 +814,15 @@ void Display_UI() {
     Display_UI_init();
     LOGI("switch mark: vdpo reconfigured");
 
+    if (before_on)
+        before_on();
     screen.display(1);
     LOGI("switch mark: oled on");
     pthread_mutex_unlock(&hardware_mutex);
+}
+
+void Display_UI() {
+    Display_UI_then(NULL);
 }
 
 // The player's display: 60Hz, so that recordings made at 60fps are shown
@@ -879,9 +885,13 @@ void Display_Playback(int lines) {
     Display_VO_SWITCH(1);
     system_exec("aww 0x06542018 0x00000044");
 
-    screen.display(1);
+    // The panel stays dark: the player lights it (hw_screen_on()) once MPP is
+    // up. MPP puts the UI layer back to 1920x1080 as it starts, and on the
+    // 720-line display that layer comes out with its lines sheared until the
+    // player fits it to the screen again: lit here, that showed for half a
+    // second (480ms from here to the fit in the log) at every playback start.
     playback_display = hd ? 1080 : 720;
-    LOGI("switch mark: Display_Playback done");
+    LOGI("switch mark: Display_Playback done, panel left off");
     pthread_mutex_unlock(&hardware_mutex);
 }
 
