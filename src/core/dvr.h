@@ -36,6 +36,9 @@ void dvr_cmd(osd_dvr_cmd_t cmd);
 // the video away from under the record process.
 void dvr_collect_stop(void);
 void dvr_update_vi_conf(video_resolution_t fmt);
+// Stop the record process's live input (REC_STOP_LIVE), unless the same stop
+// went less than a second ago with the capture setup unchanged.
+void dvr_stop_live(void);
 void dvr_toggle();
 void dvr_star();
 

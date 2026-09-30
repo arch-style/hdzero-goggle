@@ -935,7 +935,7 @@ int HDZERO_detect() // return = 1: vtmg to V536 changed
             else if (cam_mode_last == VR_1080P30 || cam_mode_last == VR_1080P24)
                 fhd_req = -1;
             dvr_update_vi_conf(CAM_MODE);
-            system_script(REC_STOP_LIVE);
+            dvr_stop_live();
             cam_mode_last = CAM_MODE;
             ret = 1;
         }

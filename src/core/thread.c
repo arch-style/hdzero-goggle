@@ -181,7 +181,7 @@ static void check_source_signal(int vtmg_change) {
     if ((g_source_info.source == SOURCE_HDZERO) && vtmg_change) {
         LOGI("HDZero VTMG change (A)\n");
         dvr_cmd(DVR_STOP);
-        system_script(REC_STOP_LIVE);
+        dvr_stop_live();
         cnt = 0;
     }
 

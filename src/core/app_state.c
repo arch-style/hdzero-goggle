@@ -87,7 +87,7 @@ void app_menu_end_overlay(void) {
 static void menu_recording_side(void) {
     dvr_enable_line_out(false);
     LOGI("switch mark: sources off");
-    system_script(REC_STOP_LIVE);
+    dvr_stop_live();
 }
 
 void app_switch_to_menu() {
@@ -235,7 +235,7 @@ void app_switch_to_analog(bool is_av_in) {
     // Goggle 2: the HDZero switch sends the same stop with no wait in front of
     // it, and this second was spent holding the UI, so every analog switch
     // ignored the buttons for it.
-    system_script(REC_STOP_LIVE);
+    dvr_stop_live();
 }
 
 void app_switch_to_hdmi_in() {
@@ -292,7 +292,7 @@ void app_switch_to_hdmi_in() {
     g_setting.autoscan.last_source = SETTING_AUTOSCAN_SOURCE_HDMI_IN;
     ini_putl("autoscan", "last_source", g_setting.autoscan.last_source, SETTING_INI);
 
-    system_script(REC_STOP_LIVE);
+    dvr_stop_live();
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -338,7 +338,7 @@ static void hdzero_recording_side(void) {
 
     dvr_update_vi_conf(CAM_MODE);
     LOGI("switch mark: dvr configured");
-    system_script(REC_STOP_LIVE);
+    dvr_stop_live();
 }
 
 // The Wide/Narrow button was the way to run the tuner init on demand, and it
@@ -507,5 +507,5 @@ void hdzero_switch_channel(int channel) {
     osd_show(true);
     lv_timer_handler();
 
-    system_script(REC_STOP_LIVE);
+    dvr_stop_live();
 }

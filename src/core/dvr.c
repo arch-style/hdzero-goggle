@@ -379,8 +379,18 @@ void dvr_select_audio_source(uint8_t source) {
 }
 
 // video input config
+// Bumped when the capture setup asked for differs from the last one, for
+// dvr_stop_live() to tell a repeat from a stop that applies a new setup.
+static volatile uint32_t vi_conf_changes = 0;
+
 void dvr_update_vi_conf(video_resolution_t fmt) {
+    static int fmt_last = -1;
+
     pthread_mutex_lock(&dvr_mutex);
+    if ((int)fmt != fmt_last) {
+        fmt_last = fmt;
+        vi_conf_changes++;
+    }
     switch (fmt) {
     case VR_720P50:
         ini_putl("vi", "width", 1280, REC_CONF);
@@ -465,6 +475,37 @@ void dvr_update_vi_conf(video_resolution_t fmt) {
     sync();
 
     LOGI("update_record_vi_conf: fmt=%d", fmt);
+}
+
+// The live stop (gogglecmd -rec stopl) makes the record process take its
+// camera input down and up again, and libISP.so writes its state to the card
+// (isp0_0_0_0_ctx_saved.bin) as it does. A camera mode change sent two of
+// them 50ms apart, one from HDZERO_detect() and one from the switch's own
+// recording side, for the same setup; the card came out of that boot with
+// that file's cluster chain broken and the kernel remounted it read-only
+// (2026-10-01, first recording after a 540p60 -> 540p90 change). A second
+// stop within a second, with the capture setup unchanged since the first, has
+// nothing to apply, so it is not sent.
+#define DVR_LIVE_STOP_REPEAT_MS 1000
+
+void dvr_stop_live(void) {
+    static pthread_mutex_t live_mutex = PTHREAD_MUTEX_INITIALIZER;
+    static bool sent = false;
+    static uint32_t sent_ms = 0;
+    static uint32_t sent_changes = 0;
+
+    pthread_mutex_lock(&live_mutex);
+    const uint32_t now = time_ms();
+    if (sent && vi_conf_changes == sent_changes && now - sent_ms < DVR_LIVE_STOP_REPEAT_MS) {
+        pthread_mutex_unlock(&live_mutex);
+        LOGI("dvr: live stop skipped, one went %ums ago for the same capture setup", now - sent_ms);
+        return;
+    }
+    sent = true;
+    sent_ms = now;
+    sent_changes = vi_conf_changes;
+    system_script(REC_STOP_LIVE);
+    pthread_mutex_unlock(&live_mutex);
 }
 
 void dvr_toggle() {
