@@ -53,6 +53,10 @@ static bool menu_over_video = false;
 // This finishes the switch the overlay skipped. Leaving the menu afterwards
 // goes through app_switch_to_hdzero(), which sets the timing and reopens the
 // tuner whatever state they were left in, so there is nothing to put back.
+bool app_menu_is_over_video(void) {
+    return menu_over_video;
+}
+
 void app_menu_end_overlay(void) {
     if (!menu_over_video)
         return;

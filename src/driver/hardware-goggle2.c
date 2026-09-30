@@ -1020,12 +1020,21 @@ void Source_AV(bool is_av_in) {
 }
 
 #define AV_DET_SWITCH_CNT 1
+// Reads to throw away after pointing the decoder at the other input. Its lock
+// bits say nothing true about a signal it has only just been connected to,
+// and at roughly 100ms a poll this is about a third of a second before the two
+// agreeing reads below are allowed to decide anything. Without it both could
+// land inside the settling time, which committed "no signal" for an input that
+// had one and switched away from it: the Source page's rows blinking, or
+// staying dark (seen on a goggle v1; the goggle 2 fork had the same fix).
+#define AV_SCAN_SETTLE    3
 #define AV_DET_LOCK_CNT   10
 #define AV_DET_DROP_CNT   5
 int AV_in_detect() // return = 1: vtmg to V536 changed
 {
     static int det_last = -1;
     static int det_cnt = 0, det2_cnt = 0;
+    static int settle = AV_SCAN_SETTLE;
     int rdat, det;
     int ret = 0;
 
@@ -1033,22 +1042,56 @@ int AV_in_detect() // return = 1: vtmg to V536 changed
 
     rdat = I2C_Read(ADDR_TP2825, 0x01);
 
-    if (g_hw_stat.source_mode == SOURCE_MODE_UI) { // detect in UI mode
+    // Both analog inputs are scanned by switching the decoder between them, so
+    // this can only run while nothing watches the decoder's output. Stock
+    // asked for the menu owning the display, which Menu Over Video breaks (it
+    // leaves the display on the live source, and the rows then kept the zeros
+    // hw_stat_init() gave them). The decoder is free whenever the picture on
+    // screen is not the analog one, menu overlaid or not.
+    bool decoder_idle = (g_hw_stat.source_mode == SOURCE_MODE_UI) ||
+                        (app_menu_is_over_video() && g_hw_stat.source_mode != SOURCE_MODE_AV);
 
-        det = (rdat & 0x80) ? 0 : 1;
-        if (det_last != det) {
+    if (decoder_idle) { // scan both inputs
+        // The video-loss bit on its own flaps, so the rows blinked between
+        // connected and disconnected while the same input played fine when
+        // selected. Ask whether the decoder has locked (as upstream 9.5.1 did
+        // on the goggle 2).
+        int vloss = ((rdat & 0x80) == 0x80);
+        int h_lock = ((rdat & 0x60) == 0x60);
+        int vh_lock = ((rdat & 0x68) == 0x68);
+
+        det = (vloss == 0) && (vh_lock || h_lock);
+
+        if (settle > 0) {
+            settle--;
+        } else if (det_last != det) {
             det_last = det;
         } else {
+            // What the status register says on each input, for the first
+            // stretch of a boot and at every change after that: two inputs at
+            // about a second a round trip, so a couple of minutes, then quiet.
+            static int diag_left = 200;
+            bool changed = g_hw_stat.av_valid[g_hw_stat.is_av_in] != det;
+
+            if (changed || diag_left > 0) {
+                if (diag_left > 0)
+                    diag_left--;
+                LOGI("av: %s %s reg01=%02x%s", g_hw_stat.is_av_in ? "avin" : "bay ",
+                     det ? "signal" : "none  ", rdat, changed ? " changed" : "");
+            }
+
             g_hw_stat.av_valid[g_hw_stat.is_av_in] = det;
             g_hw_stat.av_pal[g_hw_stat.is_av_in] = (rdat & 0x01) ? 0 : 1;
 
             g_hw_stat.is_av_in = 1 - g_hw_stat.is_av_in;
             TP2825_Switch_CH(g_hw_stat.is_av_in);
             det_last = -1;
+            settle = AV_SCAN_SETTLE;
         }
 
         det_cnt = det2_cnt = 0;
     } else if (g_hw_stat.source_mode == SOURCE_MODE_AV) { // detect in AV_in/Module_bay mode
+        settle = AV_SCAN_SETTLE;
         det = ((rdat & 0xC9) == (g_hw_stat.av_pal_w ? 0x48 : 0x49)) ? 1 : 0;
 
         if (det_last != det) {
@@ -1120,6 +1163,10 @@ int AV_in_detect() // return = 1: vtmg to V536 changed
                 break;
             }
         }
+    } else {
+        // Neither scanning nor watching an analog picture, so whatever the
+        // decoder is pointed at now, the next scan settles from scratch.
+        settle = AV_SCAN_SETTLE;
     }
 
     pthread_mutex_unlock(&hardware_mutex);

@@ -56,6 +56,8 @@ void start_display_timing_early(void);
 // For pages that play video of their own; does nothing if the menu is not
 // overlaid.
 void app_menu_end_overlay(void);
+// True while the menu is drawn over a running picture (Menu Over Video).
+bool app_menu_is_over_video(void);
 
 #ifdef __cplusplus
 }
