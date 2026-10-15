@@ -1,0 +1,26 @@
+# Goggle 2 の Wi-Fi で、周りのネットワークを周波数つきで一覧にし、設定の
+# SSID (自宅) に関連付けできるかを見る。カードに wifi-probe.sh も置くこと。
+# メニューの Wi-Fi はオフのまま。フラッシュには書かない (wifi-probe.sh 参照)。
+# 結果は HDZGOGGLE.log の "AT shell" 行。
+# 始まりにビープ 1 回、終わりに 3 回。3 回鳴るまで電源を切らない (映像が
+# 出てから 1 分弱)。1 回目 (2026-10-16) は途中で電源を切って何も取れなかった。
+
+echo wifi probe start
+beep 1
+shell sh /mnt/extsd/wifi-probe.sh start
+wait 3000
+
+echo wifi probe scan
+shell sh /mnt/extsd/wifi-probe.sh scan
+
+# 関連付けと鍵交換が終わるまで待ってから状態を見る。
+wait 15000
+echo wifi probe status
+shell sh /mnt/extsd/wifi-probe.sh status
+echo wifi probe log
+shell sh /mnt/extsd/wifi-probe.sh log
+
+echo wifi probe stop
+shell sh /mnt/extsd/wifi-probe.sh stop
+echo wifi probe done
+beep 3

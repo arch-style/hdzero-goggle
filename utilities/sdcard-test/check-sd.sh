@@ -121,6 +121,24 @@ else
 fi
 echo
 
+# rc-exp.sh: Goggle 2 のフラッシュの rc.sh に足した入口 (2026-10-16) が、
+# あれば純正の rc.sh の代わりに実行する。0 以外で終わると純正の rc.sh が
+# 続けて走り、録画やアプリが二重に起動する。
+X="$SD/rc-exp.sh"
+if [ -f "$X" ]; then
+	echo "== rc-exp.sh (Goggle 2 の rc.sh の代わり) =="
+	if LC_ALL=C grep -q "$(printf '\r')" "$X"; then
+		ng "rc-exp.sh に CR (\\r) が含まれる"
+	fi
+	if [ "$(grep -v '^[[:space:]]*$' "$X" | tail -1)" = "exit 0" ]; then
+		ok "最後が exit 0 (純正の rc.sh は続けて走らない)"
+	else
+		ng "rc-exp.sh の最後が exit 0 ではない"
+	fi
+	say "設定: $(grep -E '^(SKIP_[A-Z0-9]+|LATE_[A-Z]+|PARALLEL_[A-Z]+|I2C_[A-Z_]+|PRELOAD)=' "$X" | tr '\n' ' ')"
+	echo
+fi
+
 if [ $DUAL -eq 1 ]; then
 	G="$SD/develop.g2.sh"
 	if [ ! -f "$G" ]; then
@@ -136,6 +154,67 @@ if [ $DUAL -eq 1 ]; then
 		fi
 	fi
 	echo
+
+	# Goggle 2 の控えを取るスクリプト。読むだけであること、v1 では動かないことを見る。
+	K="$SD/goggle2-backup.sh"
+	if [ -f "$K" ]; then
+		# コメント行と、捨て先の /dev/null は見ない。
+		body=$(grep -v '^[[:space:]]*#' "$K" | sed 's#/dev/null##g')
+		if LC_ALL=C grep -q "$(printf '\r')" "$K"; then
+			ng "goggle2-backup.sh に CR (\\r) が含まれる"
+		fi
+		if printf '%s\n' "$body" | grep -q 'mtd_debug\|fw_setenv\|flash_erase\|flashcp\|nandwrite\|of=/dev\|insmod\|write_flashes\|update_goggle\|update_vtx'; then
+			ng "goggle2-backup.sh にフラッシュ書き込み系のコマンドが含まれる"
+		elif printf '%s\n' "$body" | grep -q '>[[:space:]]*"*/dev/\|>[[:space:]]*"*/mnt/app\|tar -x\|tar x'; then
+			ng "goggle2-backup.sh がデバイスか /mnt/app に書いている"
+		elif printf '%s\n' "$body" | grep -Eq '^[[:space:]]*(cp|mv|rm)[[:space:]].*/mnt/app[^[:space:]]*"?[[:space:]]*$'; then
+			ng "goggle2-backup.sh が /mnt/app のファイルを置き換えるか消している"
+		else
+			ok "goggle2-backup.sh (Goggle 2 の控え) は読むだけ"
+		fi
+		if ! printf '%s\n' "$body" | grep -q 'HDZGOGGLE2'; then
+			ng "goggle2-backup.sh に機種の確認が無い。v1 でも動いてしまう"
+		fi
+		if grep -q 'goggle2-backup.sh' "$D"; then
+			if [ -f "$SD/goggle2-backup/DONE" ]; then
+				say "控えはもう取ってある (goggle2-backup/DONE)。次の起動は setting.ini を写すだけ"
+			else
+				say "次に Goggle 2 で起動すると控えを取る。初回だけ映像まで数十秒余計にかかる"
+			fi
+		else
+			say "goggle2-backup.sh はあるが develop.sh から呼ばれない (develop.sh.dual を入れ直す)"
+		fi
+		echo
+	fi
+
+	# 設定の書き戻し。書くのは /mnt/app/setting.ini だけであることを見る。
+	W="$SD/goggle2-restore-setting.sh"
+	if [ -f "$W" ]; then
+		body=$(grep -v '^[[:space:]]*#' "$W" | sed 's#/dev/null##g')
+		if printf '%s\n' "$body" | grep -q 'mtd_debug\|fw_setenv\|flash_erase\|flashcp\|nandwrite\|of=/dev\|insmod\|write_flashes\|update_goggle\|update_vtx\|>[[:space:]]*"*/dev/\|tar -x\|tar x'; then
+			ng "goggle2-restore-setting.sh にフラッシュ書き込み系のコマンドが含まれる"
+		elif [ "$(printf '%s\n' "$body" | grep -c '/mnt/app/')" -ne 3 ] || ! printf '%s\n' "$body" | grep -q '^DST=/mnt/app/setting.ini$'; then
+			ng "goggle2-restore-setting.sh が setting.ini 以外の /mnt/app に触れているかもしれない"
+		elif ! printf '%s\n' "$body" | grep -q 'HDZGOGGLE2'; then
+			ng "goggle2-restore-setting.sh に機種の確認が無い"
+		else
+			ok "goggle2-restore-setting.sh は /mnt/app/setting.ini だけを書く"
+		fi
+		RS="$SD/goggle2-restore"
+		if [ -e "$RS/DONE" ]; then
+			say "書き戻しは済んでいる: $(tail -1 "$RS/result.txt" 2>/dev/null)"
+		elif [ ! -f "$RS/setting.ini" ]; then
+			say "goggle2-restore/setting.ini が無い。書き戻しは起きない"
+		elif [ "$(md5 -q "$RS/setting.ini")" = "$(cut -d' ' -f1 < "$RS/setting.ini.md5" 2>/dev/null)" ]; then
+			say "次に Goggle 2 で起動すると setting.ini を書き戻す ($(wc -l < "$RS/setting.ini" | tr -d ' ') 行)"
+		else
+			ng "goggle2-restore/setting.ini と setting.ini.md5 が合わない (ゴーグル側でも書かずに止まる)"
+		fi
+		if ! grep -q 'goggle2-restore-setting.sh' "$D"; then
+			say "goggle2-restore-setting.sh はあるが develop.sh から呼ばれない"
+		fi
+		echo
+	fi
 
 	echo "== 3. HDZGOGGLE.v1 (v1 で起動する fork) =="
 	A="$SD/HDZGOGGLE.v1"

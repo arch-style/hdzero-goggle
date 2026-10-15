@@ -112,6 +112,68 @@ build_goggle の out/ にはファームのイメージ (HDZERO_GOGGLE-*.bin) �
 v1 のカードには絶対に置かない (置くと更新が始まる)。
 v1 の新しいプレーヤの確認は `autotest.v1.txt` を autotest.txt としてカードに置く。
 
+### 5c. Goggle 2 の設定とフラッシュを控える (緊急更新の前に)
+
+自分の Goggle 2 で緊急更新 (`HDZG_OS.bin`) を試す前に取る。緊急更新は設定のある
+アプリ領域ごと書き直すので、設定はここでしか残らない。
+
+    cp utilities/sdcard-test/develop.sh.dual     /Volumes/<SD>/develop.sh
+    cp utilities/sdcard-test/goggle2-backup.sh   /Volumes/<SD>/
+    utilities/sdcard-test/check-sd.sh /Volumes/<SD>
+
+Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒長い)。カードの
+`goggle2-backup/` に setting.ini、/mnt/app の tar、NOR 全体 (mtd0〜7) の写しが
+できる。読むだけで、v1 では動かない。Mac で確かめて `logs/goggle2/` に移す:
+
+    utilities/sdcard-test/goggle2-backup-check.sh /Volumes/<SD>
+
+二度目からの起動は setting.ini.last-boot を取り直すだけ。取り直すときは
+`goggle2-backup/` を消す。
+
+緊急更新の後は設定が初期値に戻る。控えの setting.ini を一度だけ書き戻す:
+
+    mkdir -p /Volumes/<SD>/goggle2-restore
+    cp logs/goggle2/<日付>-flash-backup/setting.ini /Volumes/<SD>/goggle2-restore/
+    md5 -q /Volumes/<SD>/goggle2-restore/setting.ini > /Volumes/<SD>/goggle2-restore/setting.ini.md5
+    cp utilities/sdcard-test/goggle2-restore-setting.sh /Volumes/<SD>/
+
+書くのは /mnt/app/setting.ini だけ。結果は `goggle2-restore/result.txt`。
+
+### 5d. Goggle 2 の起動時間の実験 (自分の Goggle 2 だけ)
+
+フラッシュの 2 か所に、カードを見に行く入口を足してある (2026-10-16)。
+カードに実験用のスクリプトが無いか、カードを抜けば純正どおりに動く。
+足した後のファイルと元のファイルは `goggle2-flash/` にある。
+
+| 場所 | 入口 | カードのスクリプト |
+|---|---|---|
+| アプリ領域 `/mnt/app/script/rc.sh` (先頭) | `rc-exp.sh` があれば rc.sh の代わりに実行。0 以外で終われば純正を続ける | `rc-exp.sh` |
+| 上書き領域 `/etc/init.d/rc.final` (S スクリプトの繰り返し) | カードのマウント後 (S01app より後) の S スクリプトごとに `init-exp.sh <パス>` を呼ぶ。0 なら済んだもの | `init-exp.sh` |
+
+元に戻すとき、rc.final は上書き領域のファイル
+`/overlay/upperdir/etc/init.d/rc.final` を消す。`/etc/init.d/rc.final` を
+消してはいけない (元のファイルまで隠れて rc.sh が走らなくなる)。rc.sh は
+`goggle2-flash/rc.sh.orig` を書き戻す。どちらも起動しなくなったら SD からの
+緊急更新 (`HDZG_OS.bin` ほか 3 個) で全部戻る。
+
+分かったこと:
+- **I2C port 1 (IT66121, MCP3021, BMI270, NCT75) に、電源投入から早く触ると
+  固まり、電源を切るまで戻らない。** 4.3 秒と 6.2 秒は失敗、7.6 秒は成功。
+  純正の S50usb の `sleep 2` と rc.sh の `sleep 1` がこの待ちを兼ねていた。
+  準備ができたかを通信で確かめると、それ自体で固まるので、決まった時刻まで
+  待つ (`rc-exp.sh` の `I2C_NOT_BEFORE`)。
+- rc.sh の `dispw` (画面の設定) は外せない。外すと fork は lvgl_init で落ち、
+  純正も止まる。裏で走らせて、アプリの前に終わりを待つのはよい。
+- S50usb (ADB とカメラ機能の USB の準備) は要らない。Goggle 2 には USB の口が無い。
+- S10udev は動作中の SD の抜き差しでのマウントを担うので止めない。
+- アプリと録画プロセスは同じ共有ライブラリ (約 8MB) を使う。I2C を待つ間に
+  先読みすると (`preload.goggle2.txt` をカードの `preload.txt` に)、アプリの
+  起動が速くなる。
+
+時刻はカードの `init-exp.log` と `rc-exp.log` に残る。カードの起動スクリプトの
+補助 (`wifi-hello.sh`) で Wi-Fi の子機モードから SSH で入れる (ゴーグルは
+Mac の ARP の問い合わせに応えないので、ゴーグルから Mac へ ping を出す)。
+
 ### 6. 返却前
 
     cp utilities/sdcard-test/develop.sh.restore /Volumes/<SD>/develop.sh

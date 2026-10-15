@@ -1,0 +1,22 @@
+# メニューの Wi-Fi (子機モード、起動時に自動で立ち上がる) の状態を記録する。
+# カードに wifi-state.sh も置くこと。Mac 側は同じ時間に ping と SSH の入口を
+# 2 秒ごとに記録する。読むだけで何も変えない。その間メニューは開かない。
+#   前半 約 45 秒: ゴーグルからは何も出さずに状態だけ記録
+#   後半 約 75 秒: ゴーグルから Mac へ 2 秒ごとに ping を出し続ける
+# 始まりにビープ 1 回、後半の始まりに 2 回、終わりに 3 回。
+
+echo wifi state start
+beep 1
+loop 3
+  shell sh /mnt/extsd/wifi-state.sh
+  wait 15000
+end
+echo wifi keepalive start
+beep 2
+shell sh /mnt/extsd/wifi-state.sh keepalive
+loop 5
+  wait 15000
+  shell sh /mnt/extsd/wifi-state.sh
+end
+echo wifi state done
+beep 3

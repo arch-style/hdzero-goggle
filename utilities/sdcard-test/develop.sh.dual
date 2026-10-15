@@ -22,6 +22,12 @@
 # 取り違えるところだった。見分けた結果は model-history.txt に残す。
 # v1 側はバイナリの名前も分けてある (HDZGOGGLE は Goggle 2 用のまま)。
 
+# 起動の内訳 (カーネル → init → rc.sh → ここ) を取る。入った時点の経過秒を
+# 渡し、採取そのものは裏で走らせてアプリの起動を遅らせない。boot-trace.sh が
+# カードに無ければ何もしない。結果は boot-trace/NNN/、読むのは boot-trace-report.py。
+ENTRY_UPTIME=$(cut -d' ' -f1 /proc/uptime)
+[ -e /mnt/extsd/boot-trace.sh ] && /bin/sh /mnt/extsd/boot-trace.sh "$ENTRY_UPTIME" &
+
 STOCK=/mnt/app/app/HDZGOGGLE
 PLATFORM=$(cat /mnt/app/platform 2>/dev/null)
 if [ "$PLATFORM" = HDZGOGGLE2 ]; then
@@ -30,6 +36,11 @@ elif [ "$PLATFORM" = HDZGOGGLE ]; then
 	MODEL=v1
 elif [ -n "$PLATFORM" ]; then
 	MODEL=other
+elif [ "$(ls -l "$STOCK" 2>/dev/null | awk '{print $5}')" = 2738548 ]; then
+	# Goggle 2 の純正 9.5.1 の大きさ (2026-10-16 の緊急更新の前後で同じ)。
+	# 下の grep は純正アプリ 2.7MB を読むので起動のたびに 1.1 秒かかる。
+	# 大きさが違えば grep で見分ける。
+	MODEL=g2
 elif grep -qi goggle2 "$STOCK"; then
 	MODEL=g2
 else
@@ -38,6 +49,16 @@ fi
 ( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) 2>/dev/null
 
 if [ "$MODEL" = g2 ]; then
+	# 設定とフラッシュ全体の控え (緊急更新の前に取るもの)。読むだけ。初回だけ
+	# 数十秒かかり、その間は映像が出ない。2 回目からは setting.ini を写すだけ。
+	# goggle2-backup.sh がカードに無ければ何もしない。
+	[ -e /mnt/extsd/goggle2-backup.sh ] && /bin/sh /mnt/extsd/goggle2-backup.sh g2
+	# 緊急更新で初期値に戻った setting.ini を、カードの控えで一度だけ書き戻す。
+	# 無ければ何もしない。控えを取った後に呼ぶので、書き戻す前の設定も残る。
+	[ -e /mnt/extsd/goggle2-restore-setting.sh ] && /bin/sh /mnt/extsd/goggle2-restore-setting.sh g2
+	# Wi-Fi で Mac から SSH で入れるように、ゴーグルの方から Mac へ ping を出す。
+	# 理由は wifi-hello.sh。宛先は wifi-hello.txt。無ければ何もしない。
+	[ -e /mnt/extsd/wifi-hello.sh ] && /bin/sh /mnt/extsd/wifi-hello.sh > /dev/null 2>&1 &
 	if [ -e /mnt/extsd/develop.g2.sh ]; then
 		exec /bin/sh /mnt/extsd/develop.g2.sh
 	fi

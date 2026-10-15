@@ -1,0 +1,45 @@
+#!/bin/sh
+
+echo "------run rc.final file-----"
+#echo "insmod wifi modules"
+#insmod  /lib/modules/3.4.39/8723ds.ko
+#insmod  /lib/modules/3.4.39/bcmdhd.ko
+#insmod  /lib/modules/3.4.39/xradio_mac.ko
+#insmod  /lib/modules/3.4.39/xradio_core.ko
+#insmod  /lib/modules/3.4.39/xradio_wlan.ko
+
+export LD_LIBRARY_PATH=/usr/lib/eyesee-mpp:${LD_LIBRARY_PATH}
+ulimit -c unlimited
+echo /mnt/extsd/core.exe[%e].pid[%p].sig[%s] > /proc/sys/kernel/core_pattern
+
+for i in /etc/init.d/S??* ;do
+
+     # Ignore dangling symlinks (if any).
+     [ ! -f "$i" ] && continue
+
+     # fork: カードがマウントされた後 (S01app の後) は、カードに init-exp.sh が
+     # あればこの S スクリプトの扱いを任せる (起動時間の実験用、2026-10-16 に
+     # 追加)。init-exp.sh が 0 で終われば済んだものとし、0 以外なら純正どおり
+     # 走らせる。カードが無いか init-exp.sh が無ければ純正と同じ。
+     if [ -f /mnt/extsd/init-exp.sh ] && /bin/sh /mnt/extsd/init-exp.sh "$i"; then
+          continue
+     fi
+
+     case "$i" in
+    *.sh)
+        # Source shell script for speed.
+        (
+        trap - INT QUIT TSTP
+        set start
+        . $i
+        )
+        ;;
+    *)
+        # No sh extension, so fork subprocess.
+        $i start
+        ;;
+    esac
+done
+
+/mnt/app/script/rc.sh
+
