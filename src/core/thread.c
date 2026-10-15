@@ -131,6 +131,31 @@ void source_switch_hold(void) {
 void source_switch_release(void) {
     source_switching = false;
 }
+// What the two receivers say about the link, which nothing logged before: a
+// "no digital picture" report could not tell a link that never came up from a
+// picture that never reached the panel. Every change of the valid flags, and
+// RSSI, link quality (DLQ 0-8) and status every 5s while on HDZero. The answers
+// to the requests are a poll late, which is fine for this.
+static void hdz_link_log(void) {
+    static int last_valid = -1;
+    static int ticks = 0;
+    int valid = (rx_status[0].rx_valid ? 1 : 0) | (rx_status[1].rx_valid ? 2 : 0);
+    bool changed = valid != last_valid;
+
+    if (!changed && ++ticks < 50)
+        return;
+
+    ticks = 0;
+    last_valid = valid;
+    LOGI("hdz link: valid R%d L%d, rssi R%u/%u L%u/%u, dlq R%u L%u, stat R%02x L%02x, cam %d%s",
+         rx_status[0].rx_valid, rx_status[1].rx_valid,
+         rx_status[0].rx_rssi[0], rx_status[0].rx_rssi[1],
+         rx_status[1].rx_rssi[0], rx_status[1].rx_rssi[1],
+         rx_status[0].rx_DLQ, rx_status[1].rx_DLQ,
+         rx_status[0].rx_Stat, rx_status[1].rx_Stat,
+         CAM_MODE, changed ? " changed" : "");
+}
+
 static void check_source_signal(int vtmg_change) {
     static uint8_t cnt = 0;
     uint8_t is_valid;
@@ -139,6 +164,7 @@ static void check_source_signal(int vtmg_change) {
     if (g_source_info.source == SOURCE_HDZERO) {
         DM5680_req_rssi();
         DM5680_req_vldflg();
+        hdz_link_log();
         tune_channel_timer();
     } else if (g_source_info.source == SOURCE_AV_MODULE) {
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
