@@ -35,12 +35,26 @@ I2C_NOT_BEFORE=7.6
 # ファイルを読むだけで部品には触らない。実験 i5 (アプリ最初のログ 10.88 ->
 # 10.18 秒)。実験 i6 からは init-exp.sh が S10udev の時点で読むので 0
 PRELOAD=0
+# 実験 C1: アプリを I2C の関門より前に起動する。アプリは環境変数
+# HDZ_I2C_NOT_BEFORE を受け取り、自分の I2C の通信をその時刻まで待たせる
+# (src/driver/i2c.c)。関門より前に、ライブラリの読み込み、設定の読み込みなど
+# I2C を使わない分を済ませておける。ドライバ (mcp3021, nct75) と録画プロセスは
+# これまでどおり関門の後。関門を持たない純正のアプリやそれより前の fork では
+# 使わないこと
+APP_BEFORE_I2C=1
+# アプリの I2C のうち、関門 (I2C_NOT_BEFORE) で待たせる port。固まるのが
+# 分かっているのは port 1 (R_I2C) だけで、2 (FPGA、受信チップ) と 3 (HDMI 入力)
+# は未確認。C1 は全部待たせる。C2 で "1" だけにして、受信チップの初期化
+# (port 2、約 1.1 秒) を関門より前に済ませられるかを見る。
+# C1 (全部待たせる) の HDZero の起動: 関門 7.60 秒で受信チップの初期化が始まり
+# 8.95 秒まで 1.33 秒、映像は電源から 10.8 秒。C2 (2026-10-16): port 1 だけ
+APP_I2C_GATED_PORTS="1"
 
 LOG=/mnt/extsd/rc-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG" 2>/dev/null
 }
-echo "--- boot SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD" >> "$LOG" 2>/dev/null
+echo "--- boot SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS" >> "$LOG" 2>/dev/null
 t "rc-exp start"
 
 function insmod_all()
@@ -63,6 +77,9 @@ function config_uart_vdpo()
 
 	if [ "$SKIP_DISPW" = 1 ]; then
 		:
+	elif [ -e /tmp/dispw.started ]; then
+		# init-exp.sh がもう始めている (EARLY_DISPW)。終わりはアプリの前に待つ。
+		t "dispw already started by init-exp"
 	elif [ "$PARALLEL_DISPW" = 1 ]; then
 		( dispw -x; dispw -s vdpo 1080p50; t "dispw done (background)" ) &
 		DISPW_PID=$!
@@ -122,6 +139,67 @@ update_boot
 write_flashes
 t "write_flashes done"
 
+# 画面の設定がアプリより前に終わっていること (実験 2: 終わる前だと lvgl_init で
+# 落ちる)。init-exp.sh が始めたものは /tmp/dispw.done、ここで始めたものは
+# DISPW_PID で待つ。
+wait_dispw() {
+	if [ -e /tmp/dispw.started ]; then
+		i=0
+		while [ ! -e /tmp/dispw.done ] && [ $i -lt 100 ]; do
+			usleep 50000
+			i=$((i + 1))
+		done
+		t "dispw (early) waited"
+	elif [ -n "$DISPW_PID" ]; then
+		wait "$DISPW_PID"
+		DISPW_PID=""
+		t "dispw waited"
+	fi
+}
+
+start_app() {
+	if [ -e /mnt/extsd/develop.sh ]; then
+		/mnt/extsd/develop.sh
+	else
+		if [ -e /mnt/extsd/HDZGOGGLE.log ]; then
+			/mnt/app/app/HDZGOGGLE > /mnt/extsd/HDZGOGGLE.log 2>&1 &
+		else
+			#GLOG_minloglevel=3 /mnt/app/app/HDZGOGGLE &  > /dev/null 2>&1
+			/mnt/app/app/HDZGOGGLE &
+		fi
+	fi
+}
+
+# 録画プロセスの環境 (LD_LIBRARY_PATH に /lib/libffmpeg と /lib/eyesee-mpp を
+# 足す)。純正の順番ではアプリもこれを引き継いでいて、無いと ffmpeg の
+# ライブラリが見つからずにアプリが起動しない。アプリを先に起動するときも
+# その前に読み、二重に足さないよう一度だけにする。
+record_env() {
+	[ -n "$RECORD_ENV_DONE" ] && return 0
+	source /mnt/app//app/record/record-env.sh
+	RECORD_ENV_DONE=1
+}
+
+# 関門を持たないアプリ (純正、それより前の fork) を早く起動すると I2C が
+# 固まる。カードの fork 本体が関門を持つことは、Mac の check-sd.sh が本体を
+# 調べて HDZGOGGLE.features に i2c_gate と書いたときだけ信じる。無ければ
+# これまでどおり関門の後に起動する。
+if [ "$APP_BEFORE_I2C" = 1 ] && ! grep -qs '^i2c_gate$' /mnt/extsd/HDZGOGGLE.features; then
+	t "APP_BEFORE_I2C ignored: HDZGOGGLE.features does not say i2c_gate"
+	APP_BEFORE_I2C=0
+fi
+
+if [ "$APP_BEFORE_I2C" = 1 ]; then
+	wait_dispw
+	record_env
+	for p in $APP_I2C_GATED_PORTS; do
+		export HDZ_I2C${p}_NOT_BEFORE=$I2C_NOT_BEFORE
+	done
+	[ -f /mnt/extsd/app-sampler.sh ] && /bin/sh /mnt/extsd/app-sampler.sh &
+	start_app
+	t "app launched (before I2C; ports $APP_I2C_GATED_PORTS not before $I2C_NOT_BEFORE)"
+fi
+
 # 早すぎる I2C を避ける (I2C_NOT_BEFORE を参照)。
 if [ "$I2C_NOT_BEFORE" != 0 ]; then
 	while awk -v lim="$I2C_NOT_BEFORE" '{exit !($1 < lim)}' /proc/uptime; do
@@ -144,7 +222,7 @@ aww 0x050967c0 0x110e6100
 t "drivers loaded"
 
 #record process
-source /mnt/app//app/record/record-env.sh
+record_env
 if [ -e /mnt/extsd/RECORD.log ]; then
 	/mnt/app/app/record/record > /mnt/extsd/RECORD.log 2>&1 &
 else
@@ -176,24 +254,16 @@ elif [ -e /mnt/app/services/startup.sh ]; then
 fi
 t "services started"
 
-# 画面の設定を裏で走らせたなら、アプリより前に終わっていること。
-if [ -n "$DISPW_PID" ]; then
-	wait "$DISPW_PID"
-	t "dispw waited"
-fi
+if [ "$APP_BEFORE_I2C" != 1 ]; then
+	wait_dispw
 
-#start applicaion
-if [ -e /mnt/extsd/develop.sh ]; then
-	/mnt/extsd/develop.sh
-else
-	if [ -e /mnt/extsd/HDZGOGGLE.log ]; then
-		/mnt/app/app/HDZGOGGLE > /mnt/extsd/HDZGOGGLE.log 2>&1 &
-	else
-		#GLOG_minloglevel=3 /mnt/app/app/HDZGOGGLE &  > /dev/null 2>&1
-		/mnt/app/app/HDZGOGGLE &
-	fi
+	# アプリが main() に入るまでを外から見る (app-sampler.sh があれば)。
+	[ -f /mnt/extsd/app-sampler.sh ] && /bin/sh /mnt/extsd/app-sampler.sh &
+
+	#start applicaion
+	start_app
+	t "app launched"
 fi
-t "app launched"
 
 # 後回しにした SD 状態ログの写しを、アプリが立ち上がってから裏で走らせる。
 if [ "$LATE_SDSTAT" = 1 ]; then

@@ -51,12 +51,29 @@ t() {
 # (6.2 秒) から読み始め、8.39 秒に読み終わって、アプリの起動 (8.30 秒) に
 # わずかに間に合わなかった。rc-exp.sh の PRELOAD は 0 にしておくこと。
 EARLY_PRELOAD=1
+# 実験 C1: 画面の設定 (rc.sh の setup_uart と dispw、約 1.3 秒) も同じ時点で
+# 裏で始める。アプリを I2C の関門より前に起動するので、アプリの lvgl_init より
+# 前に画面の設定が終わっている必要がある (実験 2)。終わったら
+# /tmp/dispw.done を作り、rc-exp.sh はそれを待つ。dispw は I2C を使わない
+# (i2 では 4.1 秒に走って普通に終わった)。
+EARLY_DISPW=1
 
 name=${1##*/}
 if [ "$EARLY_PRELOAD" = 1 ] && [ "$name" = S10udev ] && [ -f /mnt/extsd/preload.txt ]; then
 	t "preload start"
 	( while read -r f; do cat "$f" > /dev/null 2>&1; done < /mnt/extsd/preload.txt
 	  t "preload done" ) &
+fi
+if [ "$EARLY_DISPW" = 1 ] && [ "$name" = S10udev ]; then
+	: > /tmp/dispw.started
+	t "dispw start (early)"
+	( echo 0x0300B098 0x00775577 > /sys/class/sunxi_dump/write
+	  echo 0x0300B0D8 0x22777777 > /sys/class/sunxi_dump/write
+	  echo 0x0300B0fc 0x35517751 > /sys/class/sunxi_dump/write
+	  dispw -x > /dev/null 2>&1
+	  dispw -s vdpo 1080p50 > /dev/null 2>&1
+	  : > /tmp/dispw.done
+	  t "dispw done (early)" ) &
 fi
 mode=$(mode_for "$name")
 case "$mode" in

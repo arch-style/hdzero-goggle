@@ -135,7 +135,20 @@ if [ -f "$X" ]; then
 	else
 		ng "rc-exp.sh の最後が exit 0 ではない"
 	fi
-	say "設定: $(grep -E '^(SKIP_[A-Z0-9]+|LATE_[A-Z]+|PARALLEL_[A-Z]+|I2C_[A-Z_]+|PRELOAD)=' "$X" | tr '\n' ' ')"
+	# APP_BEFORE_I2C は、アプリ自身が I2C を関門まで待たせるときだけ安全。
+	# rc-exp.sh は HDZGOGGLE.features の i2c_gate を見て判断するので、ここで
+	# 本体と突き合わせる。
+	FEAT="$SD/HDZGOGGLE.features"
+	if grep -qs '^i2c_gate$' "$FEAT"; then
+		if strings "$SD/HDZGOGGLE" 2>/dev/null | grep -q 'HDZ_I2C_NOT_BEFORE'; then
+			ok "HDZGOGGLE は I2C の関門を持つ (HDZGOGGLE.features と一致)"
+		else
+			ng "HDZGOGGLE.features は i2c_gate と言うが、HDZGOGGLE に関門が無い。早く起動すると I2C が固まる"
+		fi
+	elif grep -q '^APP_BEFORE_I2C=1' "$X"; then
+		say "APP_BEFORE_I2C=1 だが HDZGOGGLE.features が無いので、アプリは関門の後に起動する"
+	fi
+	say "設定: $(grep -E '^(SKIP_[A-Z0-9]+|LATE_[A-Z]+|PARALLEL_[A-Z]+|I2C_[A-Z_]+|PRELOAD|APP_[A-Z0-9_]+)=' "$X" | tr '\n' ' ')"
 	echo
 fi
 

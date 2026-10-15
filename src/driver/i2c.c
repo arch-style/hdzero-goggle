@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h> // for close
 
 #include <sys/syscall.h>
@@ -52,6 +53,61 @@ static iic_lock_t g_iic_locks[IIC_PORTS];
 // somebody else's turn or nobody's answer, and which chip it was.
 #define I2C_XFER_REPORT_MS 200
 
+// The goggle 2 has a window after power-on in which touching port 1 (IT66121,
+// MCP3021, BMI270, NCT75) hangs that bus until power-off: transfers started
+// 4.3 or 6.2 seconds after the kernel came up all timed out and kept timing
+// out, 7.6 seconds was fine (2026-10-16). Stock never runs into it because its
+// init scripts sleep long enough. A boot that starts the app before then
+// passes HDZ_I2C_NOT_BEFORE (seconds since kernel start, as /proc/uptime) and
+// every transfer waits for it here, the one place they all pass. Asking the
+// bus whether it is ready would itself be the early transfer, so it is a time.
+// HDZ_I2C<n>_NOT_BEFORE sets one port alone. Unset, nothing waits.
+static double g_iic_not_before[IIC_PORTS];
+static volatile bool g_iic_gate_open[IIC_PORTS];
+
+static double boot_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void i2c_gate_init(void) {
+    const char *all = getenv("HDZ_I2C_NOT_BEFORE");
+
+    for (int i = 0; i < IIC_PORTS; ++i) {
+        char name[32];
+        snprintf(name, sizeof(name), "HDZ_I2C%d_NOT_BEFORE", i);
+        const char *one = getenv(name);
+        const char *v = one ? one : all;
+
+        g_iic_not_before[i] = v ? atof(v) : 0;
+        g_iic_gate_open[i] = g_iic_not_before[i] <= 0;
+        if (!g_iic_gate_open[i])
+            LOGI("i2c: port %d not before %.2fs after kernel start (now %.2fs)",
+                 i, g_iic_not_before[i], boot_seconds());
+    }
+}
+
+static void i2c_gate_wait(int port) {
+    if (g_iic_gate_open[port])
+        return;
+
+    double now = boot_seconds();
+    double started = now;
+
+    while (now < g_iic_not_before[port]) {
+        double left = g_iic_not_before[port] - now;
+        usleep(left > 0.05 ? 50000 : (useconds_t)(left * 1e6) + 1000);
+        now = boot_seconds();
+    }
+
+    if (!g_iic_gate_open[port]) {
+        g_iic_gate_open[port] = true;
+        LOGI("i2c: port %d opened at %.2fs, first transfer waited %ums",
+             port, now, (unsigned)((now - started) * 1000));
+    }
+}
+
 // What the adapter's timeout is set to with the fix on. The default is five
 // seconds; the longest transaction here is a few hundred bits.
 #define I2C_TIMEOUT_MS 500
@@ -71,6 +127,8 @@ static int this_thread(void) {
 }
 
 void i2c_bus_lock(int port) {
+    i2c_gate_wait(port);
+
     uint32_t t0 = time_ms();
 
     pthread_mutex_lock(&g_iic_locks[port].turnstile);
@@ -154,6 +212,7 @@ void iic_init() {
         pthread_mutex_init(&g_iic_locks[i].bus, NULL);
     }
 
+    i2c_gate_init();
     twi2_probe();
 
     // Offset starts with 1 as it is not referenced thus far.
