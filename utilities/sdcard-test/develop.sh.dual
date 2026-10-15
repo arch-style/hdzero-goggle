@@ -115,6 +115,14 @@ if [ "$WRITABLE" = "1" ]; then
 	fi
 	cp /mnt/app/setting.ini "$B/setting.ini.last-boot"
 	echo "dual v1 ran" >> "$B/stage-history.txt"
+	# libISP が書き直すカード直下の isp0_0_0_0_ctx_saved.bin は、電源断で途中に
+	# なると FAT の連鎖が壊れ、カーネルがカードを読み取り専用にする。同名の
+	# ディレクトリで書けなくする。理由は develop.sh.vopatch の guard_isp_ctx。
+	ISP_CTX=/mnt/extsd/isp0_0_0_0_ctx_saved.bin
+	if [ ! -d "$ISP_CTX" ]; then
+		rm -f "$ISP_CTX" 2>/dev/null
+		mkdir "$ISP_CTX" 2>/dev/null && echo "v1: isp ctx をディレクトリに置き換えた" >> "$B/stage-history.txt"
+	fi
 	sync
 fi
 

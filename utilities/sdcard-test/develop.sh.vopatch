@@ -135,6 +135,32 @@ else
 	APP=/mnt/app/app/HDZGOGGLE
 fi
 
+# record プロセスの libISP は、カメラを止めるたびにカード直下の
+# isp0_0_0_0_ctx_saved.bin (40KB) を書き直す。電源を切られるのはリンクが切れた
+# 直後 (墜落) が多く、そこでこの書き換えが途中になると FAT のクラスタ連鎖が
+# 壊れる。以後はそのファイルに触れた瞬間にカーネルが errors=remount-ro で
+# カードを読み取り専用にし、録画が "file open failed" で始まらなくなる。
+# 2026-10-10 のカードでは同じ i_pos のエラーが 95 起動中 31 起動で出ていた。
+# このファイルは ISP の起動を少し速くするだけの保存なので、同名のディレクトリを
+# 置いて書けなくする (open が EISDIR で失敗する。読み取り専用のときも同じ失敗を
+# 毎回しているが、録画は動いていた)。通常のファイルが残っていたら置き換える。
+guard_isp_ctx() {
+	F=/mnt/extsd/isp0_0_0_0_ctx_saved.bin
+	if [ -d "$F" ]; then
+		return 0
+	fi
+	if ( : > /mnt/extsd/.wtest ) 2>/dev/null; then
+		rm -f /mnt/extsd/.wtest
+		rm -f "$F" 2>/dev/null
+		if mkdir "$F" 2>/dev/null; then
+			echo "isp ctx: ファイルをディレクトリに置き換えた" >> "$REPORT"
+		else
+			echo "isp ctx: ディレクトリを作れなかった" >> "$REPORT"
+		fi
+	fi
+}
+guard_isp_ctx 2>/dev/null
+
 echo "--- boot ---" >> "$REPORT"
 echo "app: $APP" >> "$REPORT"
 echo "inherited LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-(none)}" >> "$REPORT"
