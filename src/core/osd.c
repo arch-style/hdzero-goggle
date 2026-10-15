@@ -159,6 +159,7 @@ static lv_obj_t *img_arr[2][HD_VMAX][HD_HMAX];
 static lv_obj_t *scr_main;
 static lv_obj_t *scr_osd[2];                                                    // 0=720p,1=1080p
 static void source_name_update(void);
+static void channel_layer_update(void);
 static uint32_t osdFont_hd[OSD_VNUM][OSD_HNUM][OSD_HEIGHT_HD][OSD_WIDTH_HD];    // 0x00bbggrr
 static uint32_t osdFont_fhd[OSD_VNUM][OSD_HNUM][OSD_HEIGHT_FHD][OSD_WIDTH_FHD]; // 0x00bbggrr
 static osd_font_t osd_font_hd;
@@ -723,6 +724,7 @@ void osd_hdzero_update(void) {
     char buf[128], i;
 
     source_name_update();
+    channel_layer_update();
 
     if (g_osd_update_cnt < FC_OSD_CHECK_PERIOD)
         g_osd_update_cnt++;
@@ -893,6 +895,7 @@ static uint32_t source_name_until = 0;
 // with 0x84 at 0x11 under four VDPO clock settings, only its own REC dot
 // came through), so the name is not shown there.
 static bool source_name_layer_lent = false;
+static bool channel_layer_lent = false;
 
 #define SOURCE_NAME_MS 1200
 
@@ -961,7 +964,28 @@ static void source_name_update(void) {
 #if defined HDZGOGGLE2
     if (source_name_layer_lent) {
         source_name_layer_lent = false;
-        if (g_app_state == APP_STATE_VIDEO)
+        if (g_app_state == APP_STATE_VIDEO && !channel_layer_lent)
+            source_layer_restore();
+    }
+#endif
+}
+
+// The dial's "To A3?" is on the same layer, and osd_channel_show() draws it
+// whatever the OSD toggle says, as on HDZero. With the OSD toggled off on
+// analog the layer itself is off, so the channel being dialled was drawn and
+// never seen. Lent the same way as for the source name, for as long as the
+// question is up.
+static void channel_layer_update(void) {
+#if defined HDZGOGGLE2
+    bool want = (channel_osd_mode & 0x80) && source_layer_off() && g_app_state == APP_STATE_VIDEO;
+
+    if (want && !channel_layer_lent) {
+        I2C_Write(ADDR_FPGA, 0x84, 0x01);
+        channel_layer_lent = true;
+        LOGI("osd: layer on for the dial's channel");
+    } else if (!want && channel_layer_lent) {
+        channel_layer_lent = false;
+        if (g_app_state == APP_STATE_VIDEO && !source_name_layer_lent)
             source_layer_restore();
     }
 #endif
