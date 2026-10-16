@@ -48,8 +48,9 @@ if remote and (re.search(SEP + r"(?:sudo\s+)?(?:/usr)?(?:/s?bin/)?(?:reboot|powe
                 "ユーザーに電源ボタンでの入れ直しを頼むこと。CLAUDE.md 参照。")
 
 # 2. Never run the app binary to probe it (2026-10-16 a second instance started).
+#    An assignment like P=$(pidof HDZGOGGLE) is not an env prefix (2026-10-17 false hit).
 if remote and ("LD_TRACE_LOADED_OBJECTS" in cmd or re.search(
-        SEP + r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:nohup\s+|exec\s+)?(?:\S*/)?HDZGOGGLE(?:\.v1|\.staged)?(?=\s|$|[;&|)'\"])",
+        SEP + r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:(?!\$\()[^\s(`])*\s+)*(?:nohup\s+|exec\s+)?(?:\S*/)?HDZGOGGLE(?:\.v1|\.staged)?(?=\s|$|[;&|)'\"])",
         cmd)):
     out("deny", "アプリ本体を SSH から直接実行しない (musl は LD_TRACE を無視し、2 つ目のアプリが動いた)。"
                 "読み込みを調べるなら /lib/ld-musl-armhf.so.1 --list。CLAUDE.md 参照。")
