@@ -170,7 +170,7 @@ svg .st-muted { stroke: var(--muted); }
 
 <main>
 <header class="top">
-  <div class="meta"><span>HDZero Goggle 2</span><span>fork: fast-switch-9.6</span><span>更新 2026-10-16</span></div>
+  <div class="meta"><span>HDZero Goggle 2</span><span>fork: fast-switch-9.6</span><span>更新 2026-10-17</span></div>
   <h1>Goggle 2 起動高速化ノート</h1>
   <p class="lede">電源を入れてから HDZero の映像が出るまでを、純正の約 22 秒から 5 秒台へ近づける取り組みの記録です。何をして、何が分かり、いまどこにいて、次に何ができるかをまとめています。別のチャットで作業を続けるための資料も兼ねています。</p>
 </header>
@@ -180,31 +180,32 @@ svg .st-muted { stroke: var(--muted); }
   <h2><span class="tag">01 Status</span>進捗</h2>
   <div class="status-grid">
     <div class="panel bignum">
-      <span class="label">いまの HDZero の映像まで (電源から、3 回の測定)</span>
-      <span class="value">9.94<small> – 10.18 s</small></span>
-      <span class="sub">中央値 10.13 秒。純正 約 22 秒、fork 着手時 16.3 秒から。目標は 5 秒台。</span>
-      <div class="track" role="img" aria-label="22 秒から 5 秒への道のりのうち約 70% まで進んだ"><span id="goalbar" style="width:70%"></span></div>
+      <span class="label">いまの HDZero の映像まで (電源から、rcS の写しを入れた 5 回)</span>
+      <span class="value">6.06<small> – 6.48 s</small></span>
+      <span class="sub">中央値 6.37 秒。純正 約 22 秒、fork 着手時 16.3 秒、2026-10-16 朝 (C2) 10.13 秒、同夜 7.31 秒から。目標は 5 秒台。</span>
+      <div class="track" role="img" aria-label="22 秒から 5 秒への道のりのうち約 92% まで進んだ"><span id="goalbar" style="width:92%"></span></div>
       <div class="track-scale"><span>22 s (純正)</span><span>目標 5 s</span></div>
     </div>
     <div class="panel">
       <h3 style="margin-bottom:6px">段階</h3>
       <ul class="steps">
-        <li><span class="chip ok">完了</span><span>起動の内訳を測る (起動の約 10 秒は待つだけと判明)</span></li>
-        <li><span class="chip ok">完了</span><span>復旧手段の確保。SD からの緊急更新を実機で予行</span></li>
-        <li><span class="chip ok">完了</span><span>設定とフラッシュ全体 32MB の控え、設定の書き戻し</span></li>
-        <li><span class="chip ok">完了</span><span>Wi-Fi 経由の SSH を通す</span></li>
-        <li><span class="chip ok">完了</span><span>rc.sh と rc.final に入口を足し、カードから実験</span></li>
-        <li><span class="chip ok">完了</span><span>C1 / C2: アプリを I2C の関門より前に起動</span></li>
-        <li><span class="chip wait">確認待ち</span><span>E: 映像を関門より前に出す (提案済み、ユーザーの返事待ち)</span></li>
+        <li><span class="chip ok">完了</span><span>起動の内訳を測る、復旧手段の確保 (緊急更新と PhoenixCard)、控えと書き戻し、SSH</span></li>
+        <li><span class="chip ok">完了</span><span>rc.sh と rc.final に入口を足し、カードから実験 (C1 / C2)</span></li>
+        <li><span class="chip ok">完了</span><span>E: I2C 1 番 (HDMI 出力、傾きセンサー) を映像の後へ。映像は関門を待たない</span></li>
+        <li><span class="chip ok">完了</span><span>画面切り替えの 1 秒待ち (disp.ko) を 0.1 秒に。カードから読み込む</span></li>
+        <li><span class="chip ok">完了</span><span>udevd だけ起動、ライブラリと本体をカードから、受信チップの efuse を控える、直接起動</span></li>
+        <li><span class="chip ok">完了</span><span>64 KB クラスタのカード HDZERO_BOOT。FAT の読み込み 0.62 秒 → 0.12 秒</span></li>
+        <li><span class="chip ok">完了</span><span>カードより前のばらつきの原因は CPU のクロック (816 / 1104 MHz)。rcS の写しで起動中は最高に固定</span></li>
+        <li><span class="chip todo">未着手</span><span>カード側の小さな詰め (ライブラリの写し待ち、OSD の組み立て)</span></li>
         <li><span class="chip todo">未着手</span><span>F: アナログ入力の起動を測って縮める</span></li>
-        <li><span class="chip todo">未着手</span><span>恒久化: カードに頼らない形にしてフラッシュへ</span></li>
+        <li><span class="chip todo">未着手</span><span>恒久化、カーネルとブートローダ (UART が要る。残りの揺れ 0.3 秒もここ)</span></li>
       </ul>
     </div>
   </div>
   <div class="figure">
     <svg id="progress" viewBox="0 0 960 330" role="img" aria-label="段階ごとの HDZero の映像までの秒数"></svg>
     <div class="legend"><span><i style="background:var(--trace)"></i>実測</span><span><i style="background:var(--trace-soft);outline:1px dashed var(--trace)"></i>推定 (アプリの最初のログ + 1.7 秒)</span><span><i style="background:var(--boot)"></i>参考 (純正)</span></div>
-    <p class="figcap">HDZero の映像が出るまでの秒数 (電源から)。i6 までは入力が AV のまま測っていたため、HDZero の値は推定です。</p>
+    <p class="figcap">HDZero の映像が出るまでの秒数 (電源から)。i6 までは入力が AV のまま測っていたため、HDZero の値は推定です。段階 10 以降は 2026-10-16 の夕方から夜、クロックの固定は 2026-10-17。</p>
   </div>
 </section>
 
@@ -288,7 +289,7 @@ svg .st-muted { stroke: var(--muted); }
           <text x="22" y="116" class="t-ink">MCP3021  電池電圧</text>
           <text x="22" y="138" class="t-ink">BMI270  傾きセンサー</text>
           <text x="22" y="160" class="t-ink">NCT75  温度</text>
-          <text x="22" y="196" fill="var(--fail)" font-weight="700">早く触ると固まる</text>
+          <text x="22" y="196" fill="var(--fail)" font-weight="700">早く触ると固まる (映像の後へ)</text>
           <text x="22" y="216" class="t-muted">カーネル起動から 7.6 秒は OK</text>
           <text x="22" y="234" class="t-muted">6.2 秒・4.3 秒は失敗</text>
           <text x="22" y="252" class="t-muted">電源を切るまで戻らない</text>
@@ -338,8 +339,8 @@ svg .st-muted { stroke: var(--muted); }
         </g>
         <text x="316" y="392" class="t-muted" font-size="11">uboot · boot(カーネル) · rootfs(OS 本体) · 上書き · env · app(アプリ) · UDISK</text>
         <path d="M580 150 Q640 110 680 110" class="st-muted" stroke-width="1.5" fill="none"/>
-        <text x="20" y="320" class="t-ink" font-weight="700">SD カード (NO NAME2)</text>
-        <text x="20" y="340" class="t-muted" font-size="12">fork 本体、実験用スクリプト、ログ</text>
+        <text x="20" y="320" class="t-ink" font-weight="700">SD カード (HDZERO_BOOT)</text>
+        <text x="20" y="340" class="t-muted" font-size="12">fork 本体、ライブラリ、disp.ko、スクリプト、ログ</text>
         <text x="20" y="372" class="t-ink" font-weight="700">Wi-Fi (XR819, 2.4GHz 専用)</text>
         <text x="20" y="392" class="t-muted" font-size="12">子機モード + SSH で Mac から操作</text>
       </g>
@@ -351,14 +352,14 @@ svg .st-muted { stroke: var(--muted); }
 <!-- ============ 3. TIMELINE ============ -->
 <section id="timeline">
   <h2><span class="tag">03 Timeline</span>起動の流れ (前と今)</h2>
-  <p>同じ物差し (電源を入れてからの秒) で、作業前と今の起動を並べました。作業前は fork のアプリを純正の OS と起動スクリプトで動かした 2026-10-12 の測定、今は C2 の 1 回目の起動です。</p>
+  <p>同じ物差し (電源を入れてからの秒) で、作業前と今の起動を並べました。作業前は fork のアプリを純正の OS と起動スクリプトで動かした 2026-10-12 の測定、今は段階 62 (HDZERO_BOOT、rcS の写しを入れた後、起動時のクロックが 816 MHz だった回、2026-10-17) の起動です。</p>
   <div class="figure">
     <svg id="gantt-before" viewBox="0 0 960 330" role="img" aria-label="作業前の起動の流れ"></svg>
     <p class="figcap">作業前 (2026-10-12)。映像まで約 16.3 秒。黄色は待つだけの区間。</p>
   </div>
   <div class="figure">
     <svg id="gantt-now" viewBox="0 0 960 400" role="img" aria-label="今の起動の流れ"></svg>
-    <p class="figcap">今 (C2、2026-10-16)。映像まで 9.94 秒。多くの処理を並行に走らせ、アプリは関門の前から動いている。</p>
+    <p class="figcap">今 (段階 62、2026-10-17)。映像まで 6.37 秒。rcS の先頭から CPU を最高クロックに固定し、カードのマウントは 0.25 秒。映像は I2C 1 番の関門 (9.0 秒) を待たずに出て、1 番の部品は映像の後に裏で初期化する。</p>
   </div>
   <div class="legend">
     <span><i style="background:var(--boot)"></i>ブートローダ・カーネル</span>
@@ -408,16 +409,64 @@ svg .st-muted { stroke: var(--muted); }
       <p class="why">2 つの時計を混ぜて引き算すると、ありもしない遅れが見えてしまう (一度これで分析を誤った)。</p>
     </article>
     <article class="find">
+      <span class="kicker">画面</span>
+      <h3>画面切り替えの 1 秒は disp.ko の待ち</h3>
+      <p><code>dispw</code> で出力を切り替えるたびの 1.1 秒は、ドライバ <code>disp.ko</code> の <code>disp_vdpo_disable()</code> の最後にある <code>disp_delay_ms(1000)</code> でした。4 バイト書き換えて 100 ms にした写しをカードから読み込むと、<code>dispw -s vdpo 720p60</code> が 1.11 秒から 0.19 秒になり、画面の乱れもありません。</p>
+      <p class="why">disp.ko はアプリ領域 <code>/mnt/app/ko</code> から読まれるので、フラッシュに書かずに差し替えられる。作り方は <code>goggle2-ko/README.md</code>。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">OS</span>
+      <h3>udev は udevd だけ動かせばよい</h3>
+      <p>一斉認識 (<code>udevadm trigger</code> と <code>settle</code>) を省き、<code>udevd</code> だけを裏で起動しても、SD の抜き差しのマウントは働きます。規則が作るリンクのうち使われているのは <code>/dev/rtc</code> だけで、これが無いと fork が時計の画面で落ちました。<code>ln -s rtc0 /dev/rtc</code> で足ります。</p>
+      <p class="why">/dev の差分は by-id などのリンクだけで、ほかは誰も使っていない。fork 側も、時計が読めないときに落ちないよう直した。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">読み込み</span>
+      <h3>ライブラリはカードから写す方が速い</h3>
+      <p>アプリと録画プロセスが使う共有ライブラリ 47 本 (7.1MB) と fork 本体 3.3MB を、カードがマウントされた直後に <code>/tmp</code> へ写すと、内蔵フラッシュ (毎秒約 5MB) からの先読みより速く、取り合いも起きません。<code>LD_LIBRARY_PATH</code> の先頭に <code>/tmp/lib</code> を置きます。</p>
+      <p class="why">中身は純正の rootfs の写しで、md5 一覧は <code>goggle2-ko/g2lib.md5</code>。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">受信チップ</span>
+      <h3>efuse は控えておける</h3>
+      <p>受信チップ (DM6302 ×2) の初期化は、毎回 efuse を読みます。チップのレジスタから作った鍵と一緒にカードの <code>efuse-cache.bin</code> (3124 バイト) に控え、次からは読み出しを省きます。控えから戻した値の指紋は、読み出した値と同じでした。</p>
+      <p class="why">鍵が合わなければ読み直すので、別のゴーグルに挿しても誤った値は使わない。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">カード</span>
+      <h3>FAT の大きさがマウントの時間を決める</h3>
+      <p>このゴーグルの vfat はマウント時に FAT 全体を読みます。64GB・32KB クラスタのカードは FAT が 7.8MB で 0.62 秒、32GB・64KB クラスタの HDZERO_BOOT は 1.9MB で 0.12 秒でした。マウント全体では 0.79 秒が 0.25 秒になります。</p>
+      <p class="why">作り方は Mac で <code>sudo newfs_msdos -F 32 -c 128</code>。ディスクユーティリティではクラスタの大きさを選べない。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">ばらつき</span>
+      <h3>起動の揺れは CPU のクロックだった</h3>
+      <p>ondemand は負荷を 2 秒に 1 回しか見ません (<code>sampling_rate</code> 2000000 µs、<code>io_is_busy</code> 0)。多くの回は 816 MHz のまま起動し、ときどき最初から 1104 MHz で走ります。どちらになるかで、カードより前の区間が 0.5 秒違いました。温度は 41 ℃ で、制限の 80 ℃ よりずっと下です。</p>
+      <p class="why">rcS の写しの先頭で最低クロックを最高に固定し、15 秒後に戻す。残りの差 0.3 秒は rcS より前 (preinit) で、カーネルかブートローダでしか直せない。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">失敗から</span>
+      <h3>道具の消し忘れが測定を乱した</h3>
+      <p>新しいカードを作るとき、前のカードで止めていた <code>app-sampler.sh</code> を有効なまま写しました。50 ms ごとにコマンドを起動し続けるので、受信チップとのやり取りが 2 倍に延び、映像が 0.4 秒遅れました。止めると元に戻りました。</p>
+      <p class="why">作り直すときは、前の実物の中身と突き合わせる。<code>check-sd.sh</code> が有効な app-sampler.sh を NG にする。</p>
+    </article>
+    <article class="find">
       <span class="kicker">通信</span>
       <h3>Wi-Fi は動く。ゴーグルが問い合わせに応えないだけ</h3>
-      <p>ゴーグルの Wi-Fi は 2.4GHz 専用で、自宅の JCOM_QTXF は 2.4GHz も出していました。つながっていても、Mac からの「この IP は誰?」(ARP) にゴーグルが応えません。ゴーグルから Mac へ一度 ping を出せば、以後 SSH が通ります。</p>
-      <p class="why"><code>wifi-hello.sh</code> が起動ごとに Mac へ ping を出す。機器番号は毎回変わるが、IP は 192.168.40.229 で安定。</p>
+      <p>ゴーグルの Wi-Fi は 2.4GHz 専用です。つながっていても、Mac からの「この IP は誰?」(ARP) にゴーグルが応えません。ゴーグルから Mac へ一度 ping を出せば、以後 SSH が通ります。コワーキングスペースの Wi-Fi は端末どうしの通信を遮るので、SSH は自宅でだけ使えます。</p>
+      <p class="why"><code>wifi-hello.sh</code> が起動ごとに Mac へ ping を出す。自宅での IP は <code>192.168.40.229</code> か <code>.246</code> で、ルーターの一覧には <code>hdzero.lan</code> と出る。</p>
     </article>
     <article class="find">
       <span class="kicker">安全</span>
-      <h3>緊急更新で全体を戻せる</h3>
-      <p>SD カードに <code>HDZG_OS.bin</code> ほか 3 個を置いて電源を入れると、カーネル・OS・上書き領域・アプリ領域まで書き直されます。実機で予行し、成功を確認しました。設定は初期化されるので、控えと書き戻しの仕組みを用意しました。</p>
-      <p class="why">これがあるから、フラッシュの起動スクリプトに手を入れられた。</p>
+      <h3>ブートローダが壊れても戻せる</h3>
+      <p>SD の緊急更新 (<code>HDZG_OS.bin</code> ほか) はカーネル・OS・アプリ領域まで書き直します。さらに PhoenixCard (公式の Method 4) でカードに書いた <code>HDZG_OS.bin</code> は boot0 から起動する復旧カードになり、2026-10-16 に実機で全体を戻せました。設定は初期化されるので、控えと書き戻しの仕組みを用意しています。</p>
+      <p class="why">これがあるから、フラッシュの起動スクリプトに手を入れられた。ブートローダやカーネルの作り直しにも進める。</p>
+    </article>
+    <article class="find">
+      <span class="kicker">失敗から</span>
+      <h3>SSH の reboot では戻らない</h3>
+      <p>SSH から <code>reboot</code> を実行すると、画面が真っ暗でファンが回ったまま止まり、カードの記録も始まりませんでした。純正も再起動は使わず、更新の後は「電源を入れ直してください」と出すだけです。32MB の NOR が 4 バイトアドレスのまま残るなど、温かい再起動を想定していない作りと見ています (未確認)。</p>
+      <p class="why">起動し直すときは、必ず電源ボタンで切って入れる。</p>
     </article>
     <article class="find">
       <span class="kicker">失敗から</span>
@@ -426,10 +475,10 @@ svg .st-muted { stroke: var(--muted); }
       <p class="why">読み込みだけ測るなら <code>/lib/ld-musl-armhf.so.1 --list</code> を使う。</p>
     </article>
     <article class="find">
-      <span class="kicker">OS</span>
-      <h3>udev は止めない</h3>
-      <p>デバイスの一斉認識 (S10udev, 約 2.3 秒) は、動作中に SD カードを抜き差ししたときのマウントを担っています。止めずに、完了を待たない (裏に回す) 方向で扱います。</p>
-      <p class="why">裏に回すこと自体は I2C の失敗の原因ではなかった (i3 で確認)。</p>
+      <span class="kicker">測定</span>
+      <h3>アプリは最後に使った入力で起動する</h3>
+      <p>fork は <code>setting.ini</code> の <code>last_source</code> の入力で起動します。アナログで終えると、次の起動もアナログになり、HDZero の映像の時刻が取れません。HDZERO_BOOT の最初の 3 回がそうでした。Wi-Fi をオンにすると、アプリの開始から映像までが約 0.2 秒延びます。</p>
+      <p class="why">測る前にメニューで HDZero に戻し、Wi-Fi のオンとオフをそろえて比べる。</p>
     </article>
   </div>
 </section>
@@ -437,7 +486,7 @@ svg .st-muted { stroke: var(--muted); }
 <!-- ============ 5. EXPERIMENTS ============ -->
 <section id="experiments">
   <h2><span class="tag">05 Experiments</span>実験の記録</h2>
-  <p>「最初のログ」はアプリの main() が最初に書くログの時刻、「映像」は HDZero の画面が点いた時刻 (どちらも電源から)。i6 までは入力が AV のまま測ったので、HDZero の映像は C1 から実測です。</p>
+  <p>「最初のログ」はアプリの main() が最初に書くログの時刻、「映像」は HDZero の画面が点いた時刻 (どちらも電源から)。i6 までは入力が AV のまま測ったので、HDZero の映像は C1 から実測です。段階はカードの <code>stage.txt</code> の番号で、起動ごとに 1 つ進みます。</p>
   <div class="tablewrap">
     <table>
       <thead><tr><th>名前</th><th>変えたこと</th><th>結果</th><th>最初のログ</th><th>映像</th></tr></thead>
@@ -453,32 +502,58 @@ svg .st-muted { stroke: var(--muted); }
         <tr class="okrow"><td>i5</td><td>+ ライブラリ先読み (rc.sh の開始から)</td><td><span class="chip ok">成功</span></td><td class="num">10.18</td><td class="num">—</td></tr>
         <tr class="okrow"><td>i6</td><td>先読みを SD マウント直後へ前倒し</td><td><span class="chip ok">成功 ×4</span></td><td class="num">9.64 – 9.96</td><td class="num">AV 12.39 – 12.45</td></tr>
         <tr class="okrow"><td>C1</td><td>アプリに I2C の関門を内蔵。アプリを関門より前に起動。dispw を 3.8 秒へ</td><td><span class="chip ok">成功</span></td><td class="num">8.43 (AV) / 7.74</td><td class="num">AV 11.07 / <b>10.80</b></td></tr>
-        <tr class="nowrow"><td>C2</td><td>関門を I2C 1 番だけに (2・3 番は待たない)</td><td><span class="chip now">現在 ×3</span></td><td class="num">7.90 – 8.33</td><td class="num"><b>9.94 / 10.18 / 10.13</b></td></tr>
+        <tr class="okrow"><td>C2</td><td>関門を I2C 1 番だけに (2・3 番は待たない)</td><td><span class="chip ok">成功 ×3</span></td><td class="num">7.90 – 8.33</td><td class="num">9.94 / 10.18 / 10.13</td></tr>
+        <tr class="okrow"><td>disp.ko</td><td>画面切り替えの 1 秒待ちを 100 ms にした disp.ko をカードから読み込む (以後すべての段階で使う)</td><td><span class="chip ok">成功</span> dispw 1.11 → 0.19 秒</td><td class="num">—</td><td class="num">—</td></tr>
+        <tr class="failrow"><td>段階 1・2</td><td>S10udev を udevd だけにする</td><td><span class="chip fail">失敗</span> /dev/rtc が無く fork が時計の画面で落ちた</td><td class="num">—</td><td class="num">—</td></tr>
+        <tr class="okrow"><td>段階 3 – 8</td><td>+ <code>/dev/rtc</code> のリンク。先読みの有無、純正の udev との比較</td><td><span class="chip ok">成功</span></td><td class="num">7.55 – 7.78</td><td class="num">9.81 – 9.87</td></tr>
+        <tr class="okrow"><td>段階 9</td><td>ライブラリ 47 本をカードから <code>/tmp/lib</code> へ (先読みの代わり)</td><td><span class="chip ok">成功</span> 映像は関門待ち</td><td class="num">6.58</td><td class="num">9.86</td></tr>
+        <tr class="okrow"><td>段階 10 – 12</td><td>+ E: I2C 1 番の部品を映像の後へ (12 は E なしの比較)</td><td><span class="chip ok">成功</span></td><td class="num">6.20 – 6.70</td><td class="num"><b>7.96</b> / 8.38 / 9.92</td></tr>
+        <tr class="okrow"><td>段階 13・14</td><td>+ 本体もカードから <code>/tmp</code> へ。OSD を受信チップ待ちの前に組み立てる</td><td><span class="chip ok">成功</span></td><td class="num">6.45 / 6.63</td><td class="num">8.05 / 8.17</td></tr>
+        <tr class="okrow"><td>段階 15・16</td><td>+ 受信チップの efuse をカードに控える (15 は控えを作る回)</td><td><span class="chip ok">成功</span></td><td class="num">5.97 / 6.56</td><td class="num">7.55 / 7.90</td></tr>
+        <tr class="okrow"><td>段階 17 – 20</td><td>+ 起動の経路の sync を裏へ、udevd を待たない、ネットワークの起動を裏へ</td><td><span class="chip ok">成功 ×4</span></td><td class="num">6.37 – 6.57</td><td class="num">7.62 – 7.91</td></tr>
+        <tr class="okrow"><td>段階 21 – 24</td><td>+ rc-exp.sh から fork を直接起動 (develop.sh の連鎖を通らない)</td><td><span class="chip ok">成功 ×4</span></td><td class="num">5.65 – 6.35</td><td class="num"><b>7.00 / 7.57 / 7.65 / 7.06</b></td></tr>
+        <tr class="okrow"><td>段階 25 – 28</td><td>同じ設定を 64KB クラスタの HDZERO_BOOT で。25〜27 は入力がアナログ、28 は HDZero で Wi-Fi オン</td><td><span class="chip ok">成功 ×4</span> マウント 0.79 → 0.25 秒</td><td class="num">5.70 – 6.14</td><td class="num">アナログ 7.48 – 7.81 / 7.70</td></tr>
+        <tr class="failrow"><td>reboot</td><td>SSH から <code>reboot</code> で起動し直す</td><td><span class="chip fail">失敗</span> 画面が真っ暗のまま、カードの記録も無し</td><td class="num">—</td><td class="num">—</td></tr>
+        <tr class="failrow"><td>段階 29 – 32</td><td>HDZERO_BOOT で HDZero、Wi-Fi オン。app-sampler.sh が有効なままだった</td><td><span class="chip fail">遅い</span> 受信チップとのやり取りが 2 倍</td><td class="num">5.88 – 5.96</td><td class="num">7.44 – 7.76</td></tr>
+        <tr class="okrow"><td>段階 33 – 36</td><td>app-sampler.sh を止める</td><td><span class="chip ok">成功 ×4</span> 元の速さに戻る</td><td class="num">5.59 – 6.08</td><td class="num">7.01 – 7.36</td></tr>
+        <tr class="okrow"><td>段階 41 – 46</td><td>rc.final に dmesg の印を足す (測るだけ)</td><td><span class="chip ok">成功</span> 揺れは rc.final より前</td><td class="num">4.93 – 5.95</td><td class="num">6.54 – 7.25</td></tr>
+        <tr class="okrow"><td>段階 47 – 53</td><td>クロックの履歴を記録。偶数の段階は S10udev から最高クロック</td><td><span class="chip ok">成功</span> 揺れは起動時のクロック</td><td class="num">4.72 – 5.83</td><td class="num">6.04 – 7.19</td></tr>
+        <tr class="okrow"><td>段階 54 – 58</td><td>全回、S10udev から最高クロック</td><td><span class="chip ok">成功 ×5</span></td><td class="num">4.72 – 5.64</td><td class="num">6.05 – 6.83</td></tr>
+        <tr class="nowrow"><td>段階 59 – 63</td><td>rcS の写しを上書き領域に置き、rcS の先頭から最高クロック</td><td><span class="chip now">現在 ×5</span></td><td class="num">4.78 – 5.18</td><td class="num"><b>6.38 / 6.06 / 6.14 / 6.37 / 6.48</b></td></tr>
       </tbody>
     </table>
   </div>
-  <h3>今のカードの設定</h3>
+  <h3>今のカードの設定 (段階 21 以降)</h3>
   <div class="two">
     <div class="panel">
       <h3 style="font-size:15px;margin-bottom:8px"><code>rc-exp.sh</code> (rc.sh の代わり)</h3>
       <pre><code>SKIP_SLEEP1=1          # sleep 1 を消す
-SKIP_DISPW=0           # dispw は必須
-PARALLEL_DISPW=1       # (前倒し済みなら待つだけ)
-LATE_SDSTAT=1          # SD 状態ログはアプリ起動 10 秒後
+SKIP_DISPW=0           # dispw は必須 (前倒し済み)
+LATE_SDSTAT=1          # SD 状態ログは後で
+RECORD_DELAY=4         # 記録はサービス起動の 4 秒後
+                       # 記録の後に最低クロックを戻す
 I2C_NOT_BEFORE=7.6     # カーネル起動からの秒
-PRELOAD=0              # 先読みは init-exp.sh 側
 APP_BEFORE_I2C=1       # アプリを関門より前に起動
-APP_I2C_GATED_PORTS="1"  # 関門は 1 番だけ</code></pre>
+APP_I2C_GATED_PORTS="1"  # 関門は 1 番だけ
+FAST_LAUNCH=1          # fork を直接起動
+HDZ_DEFER_PORT1=1      # 1 番の部品を映像の後へ
+HDZ_OSD_BEFORE_TUNER=1 # OSD を受信チップ待ちの前に
+HDZ_EFUSE_CACHE=1      # efuse の控えを使う</code></pre>
     </div>
     <div class="panel">
       <h3 style="font-size:15px;margin-bottom:8px"><code>init-exp.sh</code> (S スクリプトの扱い)</h3>
-      <pre><code>S10udev      run    # 約 2.3 秒、完了を待つ
+      <pre><code>S10udev      udevd  # 裏で起動、一斉認識は省く
+                    # + ln -s rtc0 /dev/rtc
 S11dev       run
-S40network   run
+S40network   bg     # 裏へ
 S41netparam  run
 S50usb       skip   # USB の準備は不要
-EARLY_PRELOAD=1     # 3.8 秒から 11MB を先読み
-EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
+EARLY_LIBCOPY=1     # g2lib/ を /tmp/lib へ
+EARLY_APPCOPY=1     # 本体を /tmp へ
+EARLY_DISPW=1       # disp.ko を入れて画面設定
+EARLY_PRELOAD=0     # NOR の先読みはしない
+S10udev で          # クロックの履歴を記録、
+                    # 最低クロックを最高に固定</code></pre>
     </div>
   </div>
 </section>
@@ -490,12 +565,14 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
     <table>
       <thead><tr><th>場所</th><th>変更</th><th>確認値</th><th>戻し方</th></tr></thead>
       <tbody>
-        <tr><td>フラッシュ全体</td><td>2026-10-15 に SD からの緊急更新を予行。純正 9.5.1、カーネル #69 (2025-07-15) に入れ替わった</td><td class="num">—</td><td>同じ手順でいつでもやり直せる</td></tr>
-        <tr><td>アプリ領域 <code>/mnt/app/script/rc.sh</code></td><td>先頭に入口 7 行</td><td class="num">md5 cb87f258…<br>元 5fe8e7e1…</td><td>SSH で <code>goggle2-flash/rc.sh.orig</code> を書き戻す</td></tr>
-        <tr><td>上書き領域 <code>/etc/init.d/rc.final</code></td><td>S スクリプトの繰り返しに入口 8 行</td><td class="num">md5 cbc2056a…<br>元 07c372b5…</td><td><code>/overlay/upperdir/etc/init.d/rc.final</code> を消す。<b><code>/etc/init.d/rc.final</code> は消さない</b> (元まで隠れて起動しなくなる)</td></tr>
+        <tr><td>フラッシュ全体</td><td>2026-10-15 に SD からの緊急更新を予行、2026-10-16 に PhoenixCard の復旧カードで全体を書き直した。純正 9.5.1、カーネル #69 (2025-07-15)</td><td class="num">HDZG_OS.bin<br>md5 ad234f1d…</td><td>同じ手順でいつでもやり直せる</td></tr>
+        <tr><td>アプリ領域 <code>/mnt/app/script/rc.sh</code></td><td>先頭に入口 7 行。全体の書き直しの後、カードの <code>goggle2-install-hooks.sh</code> で入れ直した</td><td class="num">md5 cb87f258…<br>元 5fe8e7e1…</td><td>SSH で <code>goggle2-flash/rc.sh.orig</code> を書き戻す</td></tr>
+        <tr><td>上書き領域 <code>/etc/init.d/rc.final</code></td><td>S スクリプトの繰り返しに入口 8 行。2026-10-17 に dmesg の印を足した</td><td class="num">md5 efe8f153…<br>前 cbc2056a…<br>元 07c372b5…</td><td><code>/overlay/upperdir/etc/init.d/rc.final</code> を消す。<b><code>/etc/init.d/rc.final</code> は消さない</b> (元まで隠れて起動しなくなる)</td></tr>
+        <tr><td>上書き領域 <code>/etc/init.d/rcS</code> (新規)</td><td>純正 rcS の写しに、先頭で最低クロックを最高に固定して 15 秒後に戻す処理と、各段の印を足したもの (2026-10-17)</td><td class="num">md5 ca520542…<br>純正 a98ac80e…</td><td><code>/overlay/upperdir/etc/init.d/rcS</code> を消す。<b><code>/etc/init.d/rcS</code> は消さない</b></td></tr>
         <tr><td>アプリ領域 <code>/mnt/app/setting.ini</code></td><td>緊急更新後に控えから書き戻し。その後はメニューでの変更 (Wi-Fi オン、入力など)</td><td class="num">—</td><td>控え <code>logs/goggle2/2026-10-15-flash-backup/setting.ini</code></td></tr>
-        <tr><td>fork 本体 (カード)</td><td>I2C の関門 (<code>src/driver/i2c.c</code>) 入りのビルド 55038e5-dirty</td><td class="num">md5 96459c13…</td><td>前の本体 <code>logs/goggle2/2026-10-16-c1/HDZGOGGLE.before</code></td></tr>
-        <tr><td>SD カード (NO NAME2)</td><td>実験用スクリプト、目印 <code>HDZGOGGLE.features</code>、先読み一覧ほか</td><td class="num">—</td><td><code>rc-exp.sh</code> / <code>init-exp.sh</code> を消すかカードを抜く</td></tr>
+        <tr><td>fork 本体 (カード)</td><td>コミット 6d2d2fd のビルド。I2C の関門、1 番の後回し、OSD の前倒し、efuse の控え、時計の修正。中の build 文字列は古いまま (55038e5-dirty)</td><td class="num">md5 d8e186af…</td><td>前の本体 <code>logs/goggle2/2026-10-16-udev-stages/HDZGOGGLE.before</code> (96459c13…)</td></tr>
+        <tr><td>disp.ko (カードの <code>ko/</code>)</td><td>disp_vdpo_disable() の待ちを 1000 ms から 100 ms に (4 バイト)</td><td class="num">md5 36f9ccd6…<br>元 01f5f9a0…</td><td>カードの <code>ko/disp.ko</code> を消せば純正の <code>/mnt/app/ko/disp.ko</code></td></tr>
+        <tr><td>SD カード (HDZERO_BOOT)</td><td>32GB、FAT32 の 64KB クラスタ。実験用スクリプト、<code>g2lib/</code>、<code>ko/</code>、目印 <code>HDZGOGGLE.features</code>、<code>stage.txt</code> ほか。<code>app-sampler.sh</code> は .off のまま。前の NO NAME2 (64GB) は退役</td><td class="num">—</td><td><code>rc-exp.sh</code> / <code>init-exp.sh</code> を消すかカードを抜く</td></tr>
       </tbody>
     </table>
   </div>
@@ -508,15 +585,15 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
 <!-- ============ 7. HANDOFF ============ -->
 <section id="handoff">
   <h2><span class="tag">07 Handoff</span>引き継ぎ</h2>
-  <p>別のチャットでこの作業を続けるときは、まずここを読んでください。プロジェクトのメモリ (<code>~/.claude/projects/-Users-yoshiyuki-LocalCodes-github-hdzero-goggle/memory/</code>) にも同じ事実が残っています。返答は日本語で。</p>
+  <p>別のチャットでこの作業を続けるときは、まずこことリポジトリの <code>CLAUDE.md</code> を読んでください。フック (<code>.claude/</code>) が、ゴーグルの再起動やフラッシュへの書き込みを止めたり確認したりします。プロジェクトのメモリ (<code>~/.claude/projects/-Users-yoshiyuki-LocalCodes-github-hdzero-goggle/memory/</code>) にも同じ事実が残っています。返答は日本語で。</p>
   <div class="two">
     <div class="panel">
       <h3 style="font-size:15px;margin-bottom:8px">リポジトリ</h3>
       <dl class="kv">
         <dt>場所</dt><dd><code>~/LocalCodes/github/hdzero-goggle</code></dd>
         <dt>ブランチ</dt><dd><code>fast-switch-9.6</code></dd>
-        <dt>最近のコミット</dt><dd><code>c3b020b</code> このノート、<code>f99cef0</code> I2C の関門と C1・C2 のカードのスクリプト、<code>f2991bc</code> / <code>a2cc133</code> / <code>7e4dfe7</code> 前からの変更 3 件、<code>55038e5</code> 起動スクリプトの入口と実験一式、<code>107d7f3</code> libISP のファイル対策</dd>
-        <dt>未コミット</dt><dd>無し (2026-10-16 時点。<code>utilities/sdcard-test/__pycache__/</code> は生成物なので対象外)</dd>
+        <dt>最近のコミット</dt><dd><code>1e1951e</code> 最高クロックでの起動と印 (rcS の写し、rc.final、カードのスクリプト)、<code>529b3b2</code> CLAUDE.md とフック、<code>cfff42e</code> Wi-Fi の補助、<code>132b437</code> カード側の段階・udevd・ライブラリ・disp.ko・直接起動、<code>6d2d2fd</code> アプリの 1 番の後回し・efuse の控え・OSD の前倒し・時計の修正、<code>7f62106</code> / <code>c3b020b</code> このノート、<code>f99cef0</code> I2C の関門と C1・C2</dd>
+        <dt>未コミット</dt><dd>無し (2026-10-17 時点。<code>utilities/sdcard-test/__pycache__/</code> は生成物なので対象外)</dd>
         <dt>ビルド</dt><dd><code>docker run --rm -v "$PWD":/src -w /src hdzero-dev bash -lc 'cd build_goggle2 &amp;&amp; make -j8'</code></dd>
       </dl>
     </div>
@@ -529,6 +606,11 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
         <li><code>goggle2-recovery-files.md</code> 緊急更新と控え</li>
         <li><code>never-run-app-binary-to-probe.md</code> やってはいけないこと</li>
         <li><code>boot-time-breakdown.md</code> 起動の内訳の変遷</li>
+        <li><code>dispw-delay-in-disp-ko.md</code> disp.ko の待ち</li>
+        <li><code>goggle2-boot-card-hdzero-boot.md</code> 今のカード</li>
+        <li><code>goggle2-soft-reboot-hangs.md</code> reboot は使わない</li>
+        <li><code>boot-experiment-beeps.md</code> ビープの約束</li>
+        <li><code>feedback-verify-before-asserting.md</code> 断定のルールと誤りの記録</li>
       </ul>
     </div>
   </div>
@@ -536,7 +618,7 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
   <h3>ゴーグルに入る</h3>
   <ol class="plain">
     <li>ゴーグルの Wi-Fi は子機モードでオン (設定済み)。起動すると <code>wifi-hello.sh</code> が Mac (<code>192.168.40.46</code>、カードの <code>wifi-hello.txt</code>) へ ping を出す。</li>
-    <li>ゴーグルは <code>192.168.40.229</code>。<code>nc -z -G 1 192.168.40.229 22</code> で入口が開くのを待つ。</li>
+    <li>ゴーグルは <code>192.168.40.246</code> (2026-10-17 はずっとここ) か <code>.229</code> (<code>arp -a</code> の <code>hdzero.lan</code>)。<code>nc -z -G 1 &lt;IP&gt; 22</code> で入口が開くのを待つ。</li>
     <li>SSH は dropbear 2022.83。古い鍵方式の指定が要る。パスワードは HDZero の初期値のまま (メモリ参照)。expect で入れる:</li>
   </ol>
   <pre><code>spawn ssh -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no \
@@ -548,8 +630,9 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
   <ol class="plain">
     <li>ゴーグルが動いていれば SSH で <code>/mnt/extsd/</code> に scp し、<code>md5sum</code> で一致を確かめる。カードが Mac にあれば直接コピー。</li>
     <li>関門入りの本体を入れたら、本体に <code>HDZ_I2C_NOT_BEFORE</code> の文字列があることを確かめてから <code>HDZGOGGLE.features</code> に <code>i2c_gate</code> と書く。これが無いと <code>rc-exp.sh</code> はアプリを関門の後に起動する (関門の無い本体で早く起動すると I2C が固まるため)。</li>
-    <li>Mac でカードを点検: <code>utilities/sdcard-test/check-sd.sh "/Volumes/NO NAME2"</code> が OK になること。</li>
-    <li>ユーザーに電源の入れ直しを頼み、SSH で <code>/mnt/extsd/rc-exp.log</code>・<code>init-exp.log</code>・<code>HDZGOGGLE.log</code> を読む。</li>
+    <li>Mac でカードを点検: <code>utilities/sdcard-test/check-sd.sh /Volumes/HDZERO_BOOT</code> が OK になること。</li>
+    <li>ユーザーに電源ボタンでの入れ直しを頼む (<code>reboot</code> は使わない)。記録を書き終えると 2 ms のビープが 1 回鳴る (起動時には鳴らさない)。</li>
+    <li>SSH かカードで <code>rc-exp.log</code>・<code>init-exp.log</code>・<code>boot-logs/boot&lt;N&gt;-stage&lt;S&gt;.log</code> を読む。カードより前の区間と CPU のクロックの履歴は <code>boot-logs/early-stage&lt;S&gt;.txt</code> (dmesg の <code>bootmark:</code> の行)。</li>
   </ol>
 
   <h3>時刻の読み方</h3>
@@ -561,36 +644,35 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
   </ul>
 
   <div class="callout">
-    <p><b>いまユーザーに確認中のこと:</b> 案 E (映像を関門より前に出す) を進めてよいか。普段の入力は HDZero が多く、次がアナログ、AV はあまり使わない。</p>
+    <p><b>次にすること:</b> カード側の小さな詰め (ライブラリの写し待ち、OSD の組み立て) を、電源ボタンで数回ずつ起動して測る。Wi-Fi は SSH に要るのでオンのまま比べる。普段の入力は HDZero が多く、次がアナログ、AV はあまり使わない。公共の Wi-Fi では Mac から特別なこと (固定 IP、掃引など) をしない。</p>
   </div>
 </section>
 
 <!-- ============ 8. IDEAS ============ -->
 <section id="ideas">
   <h2><span class="tag">08 Next</span>次の高速化</h2>
-  <p>いまの起動は、I2C 1 番の関門 (電源から約 9.0 秒) を軸に回っています。関門から映像までは約 0.93 秒です。下の表は、見込みの大きさと危うさで並べた候補です。</p>
+  <p>映像は I2C 1 番の関門を待たず、起動中の CPU は rcS の先頭から最高クロックです。いまの 6.37 秒は、ブートローダとカーネルで 2.6 秒、rcS より前の preinit で 0.7 秒、rcS とカードのマウントまでで 1.0 秒、カードのスクリプトで 0.7 秒、アプリで 1.4 秒です。</p>
   <div class="figure">
-    <svg id="budget" viewBox="0 0 960 146" role="img" aria-label="今の 9.94 秒の内訳"></svg>
-    <p class="figcap">今の 9.94 秒の内訳 (C2 の 1 回目)。関門より前の約 9 秒のうち、アプリが働いているのは後半の約 1.3 秒だけ。</p>
+    <svg id="budget" viewBox="0 0 960 146" role="img" aria-label="今の 6.37 秒の内訳"></svg>
+    <p class="figcap">今の 6.37 秒の内訳 (段階 62、起動時のクロックが 816 MHz だった回)。1104 MHz で始まる回は preinit が 0.3 秒短く、6.06〜6.14 秒。</p>
   </div>
   <div class="tablewrap">
     <table>
       <thead><tr><th>案</th><th>中身</th><th>見込み</th><th>危うさ</th><th>状態</th></tr></thead>
       <tbody>
-        <tr><td><b>E</b></td><td>映像までの処理から I2C 1 番を外す。HDMI 出力 (IT66121) の初期化と位相合わせを関門後に裏で行い、傾きセンサーの待ちを映像の後へ。アプリ自身が dispw の終わりを待ち、udev を裏に回してアプリをカーネル起動から約 4 秒で起動</td><td class="num">1.5 – 2.3 s</td><td>中。2 番を 4.3 秒で使った例は無い</td><td><span class="chip wait">提案済み</span></td></tr>
-        <tr><td><b>F</b></td><td>アナログ入力の起動を測る。AV と同じなら、切り替え時の dispw 720p60 (1.07 秒) を、起動時の dispw を最初から 720p60 にして省く</td><td class="num">≈1 s (アナログ)</td><td>低</td><td><span class="chip todo">未着手</span></td></tr>
-        <tr><td><b>関門の正体</b></td><td>電源から約 9 秒で何の準備ができるのかを調べる。部品の電源やリセットを早く入れられれば、関門そのものを前に出せる。回路図・CAD は公開されている</td><td class="num">最大 3 s 超</td><td>調査のみなら無し</td><td><span class="chip todo">未着手</span></td></tr>
-        <tr><td><b>B</b></td><td>関門の時刻を 7.6 秒より前へ (6.2 秒は失敗)。原因が分からないまま削る</td><td class="num">≤1.4 s</td><td>高。失敗のたびに起動が止まり、まれな失敗も怖い</td><td><span class="chip todo">後回し</span></td></tr>
-        <tr><td>OS 初期化の前半</td><td>カーネルから SD マウントまで約 2.3 秒。上書き領域・アプリ領域 (JFFS2) のマウントの走査、<code>mdev -s</code>、S00mpp のドライバ読み込み、SD のマウント (前は 1.3 秒) を測って縮める。rcS や preinit (上書き領域) の変更になる</td><td class="num">0.5 – 1 s</td><td>中。カードより前なので失敗すると緊急更新</td><td><span class="chip todo">未着手</span></td></tr>
-        <tr><td>ブートローダ</td><td>1.4 秒。u-boot は毎回 <code>sprite_update</code> で SD の更新ファイルを確かめている。boot0 からカーネルへ直接、圧縮方式の変更など (Allwinner の起動最適化ガイドの手法)</td><td class="num">0.5 – 1 s</td><td>高。ブートローダの書き換え</td><td><span class="chip todo">調査段階</span></td></tr>
-        <tr><td>カーネル</td><td>約 1.5 秒。LZO 圧縮、不要なドライバの除去。SDK (lindenis-org) は公開されている</td><td class="num">0.3 – 0.8 s</td><td>高</td><td><span class="chip todo">調査段階</span></td></tr>
-        <tr><td>先読みの調整</td><td>11MB を約 2.4 秒で読んでいる。必要な部分だけに絞る、順番を変える</td><td class="num">0.1 – 0.3 s</td><td>低</td><td><span class="chip todo">未着手</span></td></tr>
-        <tr><td>恒久化</td><td>カードに頼らない形にする。実験の設定をフラッシュ側へ移し、fork 本体をカードから RAM へ写す 0.3 秒も省く。カードを抜いたときの純正への戻り方を決め直す必要がある</td><td class="num">0.3 – 0.5 s + 安定</td><td>中</td><td><span class="chip todo">最後</span></td></tr>
+        <tr><td><b>ライブラリの写し待ち</b></td><td>起動が速くなり、アプリがカードからのライブラリの写し (7.1MB、0.55 秒) の終わりを 0.1 秒待つようになった。写す量を減らすか、写しの順番を変える</td><td class="num">0.1 s</td><td>低</td><td><span class="chip todo">次</span></td></tr>
+        <tr><td><b>OSD の組み立て</b></td><td>ふだん 0.07〜0.09 秒が、ときどき 0.3〜0.4 秒になる。カードから文字の画像を探す処理と関係するかを測る</td><td class="num">0.1 – 0.3 s (遅い回)</td><td>低</td><td><span class="chip todo">次</span></td></tr>
+        <tr><td><b>アプリ</b></td><td>exec から main まで 0.16 秒。main から映像まで 1.2〜1.4 秒のうち、受信チップの初期化 (2 番) が 0.8 秒</td><td class="num">0.1 – 0.2 s</td><td>低</td><td><span class="chip todo">未着手</span></td></tr>
+        <tr><td><b>rcS の中</b></td><td>アプリ領域 (JFFS2、12MB) のマウント 0.4 秒、UDISK のマウントと <code>mdev -s</code> 0.25 秒。fw_printenv は 0.05 秒。マウントはカーネルの設定 (JFFS2 の summary など) なしでは縮みにくい</td><td class="num">0.1 – 0.3 s</td><td>中。上書き領域の rcS の変更</td><td><span class="chip todo">未着手</span></td></tr>
+        <tr><td><b>F</b></td><td>アナログ入力の起動を測る</td><td class="num">≈0.3 s (アナログ)</td><td>低</td><td><span class="chip todo">未着手</span></td></tr>
+        <tr><td>カーネル</td><td>約 1.2 秒。最初から最高クロックで起動する (残りの揺れ 0.3 秒もこれで消える)、不要なドライバの除去、NOR の読み出しを DTS どおりの速さに (今は毎秒 5MB)。SDK (lindenis-org) は公開されている</td><td class="num">0.5 – 1 s</td><td>高。UART が要る</td><td><span class="chip todo">調査段階</span></td></tr>
+        <tr><td>ブートローダ</td><td>1.4 秒。u-boot は毎回 <code>sprite_update</code> で SD の更新ファイルを確かめている。boot0 からカーネルへ直接、など。PhoenixCard の復旧カードで戻せる</td><td class="num">0.5 – 1 s</td><td>高。UART が要る</td><td><span class="chip todo">調査段階</span></td></tr>
+        <tr><td>恒久化</td><td>カードに頼らない形にする。実験の設定をフラッシュ側へ移し、カードを抜いたときの純正への戻り方を決め直す</td><td class="num">安定</td><td>中</td><td><span class="chip todo">最後</span></td></tr>
       </tbody>
     </table>
   </div>
   <div class="callout good">
-    <p><b>5 秒台への道筋の見立て:</b> E で約 8 秒前後、アナログも F で同程度。その先は「関門の正体」が鍵で、関門を電源から 4〜5 秒まで前に出せれば、残りはブートローダ・カーネル・OS 初期化 (合わせて約 5 秒) の短縮になります。</p>
+    <p><b>5 秒台への道筋の見立て:</b> カードと上書き領域だけでできるのは、上の小さな詰めで 6.0 秒前後まで。5 秒台にはカーネルとブートローダ (合わせて 2.6 秒) に手を入れる必要があり、そのためには UART でゴーグルの起動を見られるようにすること、PhoenixCard の復旧カードを手元に置くことが前提です。</p>
   </div>
 </section>
 
@@ -602,10 +684,17 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
       <tbody>
         <tr><th>I2C</th><td>部品どうしをつなぐ 2 本線の通信。ゴーグルには 1〜3 番の 3 系統</td></tr>
         <tr><th>関門 (I2C_NOT_BEFORE)</th><td>カーネル起動から決まった秒数になるまで I2C 1 番の通信を待たせる仕組み。アプリ側は環境変数 <code>HDZ_I2C1_NOT_BEFORE</code>、カード側は <code>rc-exp.sh</code></td></tr>
-        <tr><th>dispw</th><td>SoC の映像出力 (VDPO) の設定を変えるコマンド。1 回約 1.1 秒</td></tr>
-        <tr><th>udev</th><td>デバイスを認識して /dev を整える仕組み。SD の抜き差しのマウントも担う</td></tr>
+        <tr><th>dispw</th><td>SoC の映像出力 (VDPO) の設定を変えるコマンド。純正の disp.ko では 1 回約 1.1 秒、差し替えた disp.ko で約 0.2 秒</td></tr>
+        <tr><th>udev / udevd</th><td>デバイスを認識して /dev を整える仕組み。udevd は常駐して SD の抜き差しを扱い、起動時の一斉認識 (trigger、settle) は省ける</td></tr>
+        <tr><th>段階 (stage)</th><td>カードの <code>stage.txt</code> の番号。init-exp.sh が起動ごとに 1 つ進め、番号で実験の設定を選ぶ</td></tr>
+        <tr><th>直接起動 (FAST_LAUNCH)</th><td>rc-exp.sh が develop.sh の連鎖を通さず、<code>/tmp</code> に写した fork を起動すること</td></tr>
+        <tr><th>efuse</th><td>受信チップに工場で焼かれた調整値。初期化のたびに読んでいたものをカードに控える</td></tr>
+        <tr><th>PhoenixCard</th><td>Allwinner の Windows ツール。HDZG_OS.bin を書いたカードは boot0 から起動して全体を書き直す復旧カードになる</td></tr>
         <tr><th>上書き領域 (overlay)</th><td>書き換えできない OS 本体の上に、変更分だけを置く 512KB の領域</td></tr>
-        <tr><th>先読み (preload)</th><td>後で使うファイルを先に読み、メモリに置いておくこと</td></tr>
+        <tr><th>先読み (preload)</th><td>後で使うファイルを先に読み、メモリに置いておくこと。段階 9 からは、カードから /tmp への写しに置き換えた</td></tr>
+        <tr><th>ondemand</th><td>CPU のクロックを負荷に合わせて変える仕組み。このゴーグルでは負荷を 2 秒に 1 回だけ見る</td></tr>
+        <tr><th>bootmark</th><td>rcS と rc.final が <code>/dev/kmsg</code> に書く区切りの印。dmesg にカーネルの時刻付きで残る</td></tr>
+        <tr><th>クラスタ</th><td>FAT32 がファイルに割り当てる単位。大きいほど FAT が小さくなり、マウントが速い</td></tr>
         <tr><th>緊急更新</th><td>SD に復旧用ファイルを置いて電源を入れると、ブートローダがフラッシュを書き直す仕組み</td></tr>
         <tr><th>uptime</th><td>カーネルが動き出してからの秒。アプリのログの時刻より約 1.4 秒小さい</td></tr>
       </tbody>
@@ -669,20 +758,22 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
 
   gantt('gantt-now', [
     ['ブートローダ', 0, 1.4, 'boot'],
-    ['カーネル', 1.4, 2.9, 'boot'],
-    ['OS 初期化・SD マウント', 3.1, 5.2, 'os'],
-    ['先読み 11MB (裏)', 5.2, 7.6, 'card'],
-    ['画面設定 dispw (裏・前倒し)', 5.2, 6.9, 'os'],
-    ['udev (完了を待つ)', 5.2, 7.4, 'os'],
-    ['USB の準備', 7.4, 7.42, 'os', '飛ばす'],
-    ['rc-exp.sh → アプリ起動', 7.4, 7.67, 'card'],
-    ['アプリ: 読み込み・設定', 7.67, 8.09, 'app'],
-    ['受信チップ初期化 (2 番)', 8.09, 9.26, 'app', '1.17s'],
-    ['主スレッド: 1 番を待つ', 8.1, 9.0, 'wait'],
-    ['ドライバ・録画プロセス', 9.0, 9.12, 'os'],
-    ['1 番の部品・画面・OSD', 9.0, 9.65, 'app'],
-    ['傾きセンサー待ち・切替', 9.65, 9.94, 'app']
-  ], { tmax: 17, markers: [[9.0, 'I2C 1 番の関門 9.0s', 'st-wait', '5 4'], [9.94, '映像 9.94s', 'st-fail']] });
+    ['カーネル', 1.4, 2.57, 'boot'],
+    ['preinit・マウント (816 MHz)', 2.57, 3.27, 'os', '0.70s'],
+    ['rcS: アプリ領域のマウント', 3.28, 3.70, 'os', '0.43s'],
+    ['rcS: UDISK・mdev', 3.71, 3.96, 'os'],
+    ['S00mpp・S00part', 3.97, 4.06, 'os'],
+    ['SD マウント (S01app)', 4.06, 4.32, 'os', '0.25s'],
+    ['ライブラリと本体を /tmp へ', 4.38, 4.93, 'card'],
+    ['画面設定 dispw (disp.ko)', 4.38, 4.80, 'os'],
+    ['rc-exp.sh → アプリ起動', 4.77, 4.98, 'card'],
+    ['アプリ: 読み込み・設定', 4.98, 5.29, 'app'],
+    ['受信チップ初期化 (2 番)', 5.29, 6.11, 'app', '0.82s'],
+    ['画面・OSD の組み立て', 5.29, 6.04, 'app'],
+    ['OLED・切り替え → 映像', 6.11, 6.37, 'app'],
+    ['ドライバ・録画プロセス', 9.0, 9.15, 'os'],
+    ['1 番の部品 (映像の後、裏)', 9.0, 9.75, 'app']
+  ], { tmax: 17, markers: [[6.37, '映像 6.37s', 'st-fail'], [9.0, 'I2C 1 番の関門 9.0s', 'st-wait', '5 4']] });
 
   // Progress bars: [label, seconds, kind, note]
   (function () {
@@ -694,7 +785,12 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
       ['rc.sh 実験 3', 13.6, 'est', '≈13.4–13.9 s'],
       ['初期化の実験 i6', 11.5, 'est', '≈11.3–11.7 s'],
       ['C1 アプリを関門の前に', 10.8, 'meas', '10.80 s'],
-      ['C2 関門は 1 番だけ', 10.13, 'meas', '9.94–10.18 s']
+      ['C2 関門は 1 番だけ', 10.13, 'meas', '9.94–10.18 s'],
+      ['段階 10 1 番を映像の後へ', 7.96, 'meas', '7.96 s'],
+      ['段階 15–16 efuse の控え', 7.90, 'meas', '7.55 / 7.90 s'],
+      ['段階 21–24 直接起動', 7.31, 'meas', '7.00–7.65 s'],
+      ['段階 54–58 S10udev から最高クロック', 6.64, 'meas', '6.05–6.83 s'],
+      ['段階 59–63 rcS から最高クロック', 6.37, 'meas', '6.06–6.48 s']
     ];
     var X0 = 200, X1 = 900, T = 24, top = 22, rowH = 44;
     var sx = function (t) { return X0 + (X1 - X0) * t / T; };
@@ -716,20 +812,20 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
     svg.setAttribute('viewBox', '0 0 960 ' + (top + rows.length * rowH + 30));
   })();
 
-  // Budget strip for the current 9.94 s
+  // Budget strip for the current 6.37 s (stage 62)
   (function () {
     var svg = document.getElementById('budget');
     if (!svg) return;
     var parts = [
       ['ブートローダ', 1.4, 'boot', 'a'],
-      ['カーネル', 1.5, 'boot', 'b'],
-      ['OS 初期化・SD', 2.3, 'os', 'a'],
-      ['udev ほか', 2.2, 'os', 'b'],
-      ['起動スクリプト', 0.27, 'card', 'c'],
-      ['アプリ (関門前)', 1.33, 'app', 'b'],
-      ['関門後 → 映像', 0.94, 'app', 'a']
+      ['カーネル', 1.17, 'boot', 'b'],
+      ['preinit', 0.7, 'os', 'a'],
+      ['rcS', 0.69, 'os', 'b'],
+      ['SD まで', 0.35, 'os', 'a'],
+      ['カードのスクリプト', 0.66, 'card', 'b'],
+      ['アプリ → 映像', 1.39, 'app', 'a']
     ];
-    var X0 = 20, X1 = 940, T = 9.94, y = 36;
+    var X0 = 20, X1 = 940, T = 6.36, y = 36;
     var x = X0;
     parts.forEach(function (p, i) {
       var w = (X1 - X0) * p[1] / T;
@@ -742,11 +838,11 @@ EARLY_DISPW=1       # 3.8 秒から画面設定</code></pre>
       svg.appendChild(lab);
       x += w;
     });
-    svg.appendChild(el('text', { x: X1, y: y + 100, 'text-anchor': 'end', 'font-size': 11.5, 'class': 't-muted t-mono' }, '合計 9.94 s (電源から映像まで)'));
+    svg.appendChild(el('text', { x: X1, y: y + 100, 'text-anchor': 'end', 'font-size': 11.5, 'class': 't-muted t-mono' }, '合計 6.37 s (電源から映像まで)'));
   })();
 
   // goal progress: from 22 s to 5 s
-  var cur = 10.13, from = 22, goal = 5;
+  var cur = 6.37, from = 22, goal = 5;
   var pct = Math.round(100 * (from - cur) / (from - goal));
   var bar = document.getElementById('goalbar');
   if (bar) { bar.style.width = pct + '%'; bar.parentNode.setAttribute('aria-label', '22 秒から 5 秒への道のりのうち ' + pct + '% まで進んだ'); }
