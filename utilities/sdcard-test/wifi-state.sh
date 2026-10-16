@@ -11,7 +11,10 @@
 #   (引数なし)  状態を 1 回出す
 #   keepalive   Mac へ 2 秒ごとに ping を 90 秒間、裏で送り続ける。ゴーグルから
 #               通信を出し続けたときに Mac から見えるようになるかを見る
-MAC_IP=192.168.40.46
+# Mac の IP はカードの wifi-hello.txt の 1 行目 (wifi-hello.sh と同じ)。無ければ
+# 以前の自宅の値。
+MAC_IP=$(head -1 /mnt/extsd/wifi-hello.txt 2>/dev/null | tr -d ' \r')
+[ -n "$MAC_IP" ] || MAC_IP=192.168.40.46
 
 if [ "$1" = keepalive ]; then
 	(
@@ -42,4 +45,9 @@ for f in /sys/module/xradio_wlan/parameters/* /sys/module/xradio_core/parameters
 	[ -r "$f" ] && echo "param ${f#/sys/module/}=$(cat "$f" 2>/dev/null)"
 done
 ls /sys/kernel/debug/ieee80211/*/netdev:wlan0 2>/dev/null | tr '\n' ' '; echo
-dmesg 2>/dev/null | grep -i -E 'deauth|disassoc|reason|power|ps_|beacon|lost' | tail -8
+dmesg 2>/dev/null | grep -i -E 'deauth|disassoc|reason|power|ps_|beacon|lost|assoc|auth|xradio.*(join|connect|scan)' | tail -12
+# 子機モードの設定 (アプリが設定から作る)。鍵は伏せる。
+sed 's/psk=.*/psk=<hidden>/' /tmp/wpa_supplicant.conf 2>/dev/null
+# wpa_supplicant の制御ソケットがあれば、名前だけ (wpa_cli は無い)。
+ls /var/log/wpa_supplicant 2>/dev/null | tr '\n' ' '; echo
+ps 2>/dev/null | grep -E 'wpa_supplicant|udhcpc|dropbear|wifi-hello' | grep -v grep
