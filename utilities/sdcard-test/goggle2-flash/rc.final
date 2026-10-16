@@ -1,6 +1,15 @@
 #!/bin/sh
 
 echo "------run rc.final file-----"
+
+# fork: 起動の段の区切りを dmesg に残す (2026-10-17 に追加)。カードより前の区間
+# (S00mpp、S01app のカードのマウント) の時間を測るため。/dev/kmsg に書くので
+# カードが無くても残り、カーネルの時刻が付く。書けなければ何もしない。
+bootmark() {
+     [ -c /dev/kmsg ] && echo "bootmark: $*" > /dev/kmsg 2>/dev/null
+     return 0
+}
+bootmark "rc.final start"
 #echo "insmod wifi modules"
 #insmod  /lib/modules/3.4.39/8723ds.ko
 #insmod  /lib/modules/3.4.39/bcmdhd.ko
@@ -16,6 +25,8 @@ for i in /etc/init.d/S??* ;do
 
      # Ignore dangling symlinks (if any).
      [ ! -f "$i" ] && continue
+
+     bootmark "$i"
 
      # fork: カードがマウントされた後 (S01app の後) は、カードに init-exp.sh が
      # あればこの S スクリプトの扱いを任せる (起動時間の実験用、2026-10-16 に
@@ -41,5 +52,6 @@ for i in /etc/init.d/S??* ;do
     esac
 done
 
+bootmark "rc.sh"
 /mnt/app/script/rc.sh
 

@@ -22,7 +22,10 @@
 STOCK_RC=5fe8e7e1775d7a07f29c6c53b171883b
 HOOKED_RC=cb87f2580bfce48f3198f94401454d7e
 STOCK_FINAL=07c372b5b13ea55dc9b35e69484d1fac
-HOOKED_FINAL=cbc2056aa493be98a8832c185a2b8b70
+# rc.final: 入口だけの版 (2026-10-16) と、それに起動の段の印を足した版 (2026-10-17)。
+# 入口だけの版は、純正と同じく新しい版へ上げてよいものとして扱う。
+PREV_FINAL=cbc2056aa493be98a8832c185a2b8b70
+HOOKED_FINAL=efe8f15333a125490c5f55834eb6b041
 
 R=/mnt/extsd/goggle2-install-hooks
 SRC=/mnt/extsd/goggle2-flash
@@ -78,7 +81,7 @@ DST=/etc/init.d/rc.final
 cur=$(m "$DST")
 if [ "$cur" = "$HOOKED_FINAL" ]; then
 	say "rc.final: すでに入口入り"
-elif [ "$cur" != "$STOCK_FINAL" ]; then
+elif [ "$cur" != "$STOCK_FINAL" ] && [ "$cur" != "$PREV_FINAL" ]; then
 	say "rc.final: 純正でも入口入りでもない ($cur)。触らない"
 else
 	cp "$DST" "$R/rc.final.before"

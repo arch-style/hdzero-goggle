@@ -68,6 +68,8 @@
 #   20 段階 19 と同じ (ばらつき)。
 #   21〜23 段階 20 + rc-exp.sh から fork を直接起動する (FAST_LAUNCH。develop.sh
 #      の連鎖を通らない)。3 回同じ。
+#   24 以降 段階 21 と同じ。判定は 999 まで同じ設定になる (2026-10-16 夜、
+#      29 の次で純正寄りの起動に戻ってしまうのに気付いて広げた)。
 # 段階 3/4 (2026-10-16) は落ちずに起動したが、アプリのログが次の起動で
 # 上書きされて映像の時刻が読めなかった。段階 6 からは rc-exp.sh が記録の
 # 終わりにログを boot-logs/ へ写す。/dev の差分 (段階 5 と 3) は udev の規則が
@@ -87,9 +89,9 @@ else
 fi
 mode_for() {
 	case "$1" in
-	S10udev)     case "$STAGE" in 1|2|3|4|6|7|8|9|1[0-9]|2[0-9]) echo udevd ;; *) echo run ;; esac ;;
+	S10udev)     case "$STAGE" in 1|2|3|4|6|7|8|9|1[0-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) echo udevd ;; *) echo run ;; esac ;;
 	S11dev)      echo run ;;
-	S40network)  case "$STAGE" in 19|2[0-9]) echo bg ;; *) echo run ;; esac ;;
+	S40network)  case "$STAGE" in 19|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) echo bg ;; *) echo run ;; esac ;;
 	S41netparam) echo run ;;
 	S50usb)      echo skip ;;
 	*)           echo stock ;;
@@ -106,18 +108,18 @@ t() {
 # (6.2 秒) から読み始め、8.39 秒に読み終わって、アプリの起動 (8.30 秒) に
 # わずかに間に合わなかった。rc-exp.sh の PRELOAD は 0 にしておくこと。
 EARLY_PRELOAD=1
-case "$STAGE" in 4|7|9|1[0-9]|2[0-9]) EARLY_PRELOAD=0 ;; esac
+case "$STAGE" in 4|7|9|1[0-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) EARLY_PRELOAD=0 ;; esac
 # 段階 9 以降: 共有ライブラリをカードから /tmp/lib へ写す (下の EARLY_LIBCOPY)。
 EARLY_LIBCOPY=0
-case "$STAGE" in 9|1[0-9]|2[0-9]) EARLY_LIBCOPY=1 ;; esac
+case "$STAGE" in 9|1[0-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) EARLY_LIBCOPY=1 ;; esac
 # 段階 13 以降: fork 本体もここで /tmp に写す。develop.g2.sh は
 # /tmp/HDZGOGGLE.staged.done があり大きさが合えば、自分では cp しない。
 EARLY_APPCOPY=0
-case "$STAGE" in 1[3-9]|2[0-9]) EARLY_APPCOPY=1 ;; esac
+case "$STAGE" in 1[3-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) EARLY_APPCOPY=1 ;; esac
 # 段階 18 以降: udevd の起動を待たない (自分でデーモンになるまでの時間を待たず、
 # 次の S スクリプトへ進む)。
 UDEVD_BG=0
-case "$STAGE" in 1[8-9]|2[0-9]) UDEVD_BG=1 ;; esac
+case "$STAGE" in 1[8-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) UDEVD_BG=1 ;; esac
 # 実験 C1: 画面の設定 (rc.sh の setup_uart と dispw、約 1.3 秒) も同じ時点で
 # 裏で始める。アプリを I2C の関門より前に起動するので、アプリの lvgl_init より
 # 前に画面の設定が終わっている必要がある (実験 2)。終わったら
@@ -146,9 +148,29 @@ dispw_x() {
 name=${1##*/}
 # 最初に呼ばれる時点 (S10udev、約 3 秒) の dmesg をカードに控える。カーネルと
 # 初期化の前半の内訳はここにしか残らない (後で押し出される)。数 ms。
+# 起動ごとの写しも boot-logs/early-stage<段階>.txt に残す (2026-10-17。それまでは
+# 毎回上書きで、最後の起動の分しか読めなかった)。
 if [ "$name" = S10udev ]; then
 	dmesg > /mnt/extsd/dmesg-early.txt 2>/dev/null
+	mkdir -p /mnt/extsd/boot-logs 2>/dev/null
+	cp /mnt/extsd/dmesg-early.txt "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
 	t "stage $STAGE"
+	# CPU のクロックの履歴 (2026-10-17)。起動直後は 816 MHz で、約 2 秒ごとに
+	# 1 段ずつ上がり、1104 MHz に届くのは 8 秒ほど後だった。どのクロックで
+	# 何秒動いたか (単位 10 ms) を同じファイルに足す。rc-exp.sh も記録の終わりに足す。
+	C=/sys/devices/system/cpu/cpu0/cpufreq
+	{ echo "== cpufreq at S10udev $(cut -d' ' -f1 /proc/uptime)"
+	  echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"
+	  cat $C/stats/time_in_state; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	# ここから最低クロックを最高に固定する。ondemand は負荷を 2 秒に 1 回しか
+	# 見ず (sampling_rate 2000000)、起動中は 816 MHz のまま待つ回が多い。段階
+	# 47-53 の比べ (偶数だけ固定) で映像が 0.3-0.5 秒早かったので、段階 54 から
+	# 全回に入れる。rc-exp.sh が記録の終わりに元の最低クロックへ戻す。電源を
+	# 切れば元に戻る (フラッシュには書かない)。
+	case "$STAGE" in *[02468]|5[4-9]|[6-9][0-9]|[1-9][0-9][0-9])
+		cat $C/scaling_max_freq > $C/scaling_min_freq 2>/dev/null \
+			&& t "cpu min set to $(cat $C/scaling_min_freq)" ;;
+	esac
 fi
 # 段階 1/2: I2C のピンの電位を 9 秒まで 100ms ごとに記録する (読むだけ)。
 # port 1 = twi1 = PE16/PE17 (PE_DATA 0x0300B0A0 の bit16/17)、

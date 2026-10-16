@@ -24,6 +24,11 @@ PARALLEL_DISPW=1
 # 内蔵の SD 状態ログをカードの log/ へ写す処理 (約 1.2 秒)。SD カードの
 # 認識の記録に使うので消さず、アプリを起動した後に裏で走らせる
 LATE_SDSTAT=1
+# 記録 (SD 状態ログ、dmesg、アプリのログの写し) を書くまでの待ち。サービスを
+# 起動してからの秒数。映像の後の port 1 (HDMI 出力、モーションセンサー) は
+# 9.7 秒ごろ、メニューの組み立ては 11 秒ごろに終わるので、7.8 秒 + 4 秒で
+# 両方が入る。2026-10-16 夜までは 10 で、ビープが電源から 18 秒だった
+RECORD_DELAY=4
 # I2C に触る前に、電源投入からこの秒数になるまで待つ (0 = 待たない)。
 # 実験 i2/i3 (2026-10-16): ドライバの読み込みを 4.3 秒や 6.2 秒に始めると、
 # I2C port 1 が時間切れで使えなくなり起動画面で止まった。7.7 秒 (i1) は
@@ -57,29 +62,29 @@ STAGE=$(cat /tmp/exp-stage 2>/dev/null)
 [ -n "$STAGE" ] || STAGE=0
 case "$STAGE" in
 1) APP_I2C_GATED_PORTS="1 2 3" ;;
-2|3|4|5|6|7|8|9|1[0-9]|2[0-9]) APP_I2C_GATED_PORTS="1" ;;
+2|3|4|5|6|7|8|9|1[0-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) APP_I2C_GATED_PORTS="1" ;;
 esac
 # 段階 9 以降: init-exp.sh がカードの g2lib/ を /tmp/lib に写すので、アプリと
 # 録画プロセスにはそこから読ませる (LD_LIBRARY_PATH の先頭)。
 LIBCOPY=0
-case "$STAGE" in 9|1[0-9]|2[0-9]) LIBCOPY=1 ;; esac
+case "$STAGE" in 9|1[0-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) LIBCOPY=1 ;; esac
 # 段階 10/11、13 以降: 案 E。fork 本体が HDZ_DEFER_PORT1 を見て、HDMI 出力
 # (IT66121) と IMU の port 1 の初期化を映像の後の別スレッドに回す。
 DEFER_PORT1=0
-case "$STAGE" in 10|11|1[3-9]|2[0-9]) DEFER_PORT1=1 ;; esac
+case "$STAGE" in 10|11|1[3-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) DEFER_PORT1=1 ;; esac
 # 段階 14 以降: OSD の組み立て (lvgl だけ) をチューナー待ちの前に。
 OSD_BEFORE_TUNER=0
-case "$STAGE" in 1[4-9]|2[0-9]) OSD_BEFORE_TUNER=1 ;; esac
+case "$STAGE" in 1[4-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) OSD_BEFORE_TUNER=1 ;; esac
 # 段階 15 以降: チューナーの efuse (工場で焼かれた較正値) をカードに控え、
 # 2 回目からは macro 2 以降の読み出し (約 0.4 秒) を省く。
 EFUSE_CACHE=0
-case "$STAGE" in 1[5-9]|2[0-9]) EFUSE_CACHE=1 ;; esac
+case "$STAGE" in 1[5-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) EFUSE_CACHE=1 ;; esac
 # 段階 21 以降: develop.sh → develop.g2.sh の連鎖 (機種判定、控え、報告、
 # 本体の cp で 0.4〜0.5 秒) を通らず、ここから直接 fork を起動する。設定の
 # 書き戻しだけは前に同期で行い、控え、wifi-hello、起動しなかったときの純正への
 # 切り替え (8 秒後) と動作確認 (30 秒後) は起動の後ろに回す。
 FAST_LAUNCH=0
-case "$STAGE" in 2[1-9]) FAST_LAUNCH=1 ;; esac
+case "$STAGE" in 2[1-9]|[3-9][0-9]|[1-9][0-9][0-9]) FAST_LAUNCH=1 ;; esac
 # この起動の通し番号 (カードの boot-logs/count)。アプリのログの写しの名前に使う。
 mkdir -p /mnt/extsd/boot-logs 2>/dev/null
 BOOTN=$(( $(tr -dc 0-9 < /mnt/extsd/boot-logs/count 2>/dev/null) + 1 ))
@@ -267,18 +272,23 @@ fast_launch() {
 	( [ -e /mnt/extsd/goggle2-backup.sh ] && SYNC_BG=1 /bin/sh /mnt/extsd/goggle2-backup.sh g2
 	  echo "platform=[fast launch] model=g2" >> /mnt/extsd/model-history.txt
 	  [ -e /mnt/extsd/wifi-hello.sh ] && /bin/sh /mnt/extsd/wifi-hello.sh ) > /dev/null 2>&1 &
+	# 起動から 8 秒でアプリがいなければ純正で起動し、結果を書いたら
+	# /tmp/launch-report.done を置く。記録を書く側 (LATE_SDSTAT) はこれを
+	# 待ってからビープを鳴らすので、ビープの後にカードへ書くものは残らない。
+	# 2026-10-16 夜までは、さらに 22 秒待ってから pid を書いていた。
+	FAST_USED=1
 	( echo "--- boot ---"
 	  echo "app: $APP (fast launch from rc-exp.sh, stage $STAGE)"
 	  sleep 8
 	  if ! app_pid > /dev/null; then
 		echo "fork が起動しなかったので純正で起動する"
 		/mnt/app/app/HDZGOGGLE &
+		sleep 1
 	  fi
-	  sleep 22
 	  PID=$(app_pid)
 	  echo "app pid: ${PID:-not found}"
 	  [ -n "$PID" ] && echo "mapped: $(grep -o '[^ ]*libmpp_vo[^ ]*' "/proc/$PID/maps" 2>/dev/null | head -1)"
-	  sync ) >> "$REPORT" 2>&1 &
+	  sync; : > /tmp/launch-report.done ) >> "$REPORT" 2>&1 &
 	return 0
 }
 
@@ -411,11 +421,22 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 	# ついでに dmesg をカードに控える (リングバッファは約 16KB で、16 秒ごろの
 	# IT66121 の NACK 連打に押し出される前に取る)。画面切り替えの [VDPO] の
 	# disable から enable までの間隔 (disp.ko の差し替えの確認) を見る。
-	( sleep 10; /mnt/app/script/sdstat_log_backup.sh > /dev/null 2>&1; t "late sdstat done"; dmesg > /mnt/extsd/dmesg-late.txt 2>/dev/null
+	( sleep "$RECORD_DELAY"; /mnt/app/script/sdstat_log_backup.sh > /dev/null 2>&1; t "late sdstat done"; dmesg > /mnt/extsd/dmesg-late.txt 2>/dev/null
 	  # アプリのログは次の起動で上書きされるので、ここまでの分を写しておく
 	  # (映像が出るまでの時刻はこの中)。
 	  cp /mnt/extsd/HDZGOGGLE.log "/mnt/extsd/boot-logs/boot$BOOTN-stage$STAGE.log" 2>/dev/null
 	  cp /mnt/extsd/dmesg-late.txt "/mnt/extsd/boot-logs/boot$BOOTN-stage$STAGE.dmesg" 2>/dev/null
+	  # 起動確認の報告 (fast_launch) が書き終わるまで待つ (最大 10 秒)
+	  if [ "$FAST_USED" = 1 ]; then
+		i=0
+		while [ ! -e /tmp/launch-report.done ] && [ $i -lt 100 ]; do usleep 100000; i=$((i + 1)); done
+	  fi
+	  C=/sys/devices/system/cpu/cpu0/cpufreq
+	  { echo "== cpufreq at records $(cut -d' ' -f1 /proc/uptime)"
+	    echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"
+	    cat $C/stats/time_in_state; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	  # init-exp.sh が起動中だけ最高に固定した最低クロックを、元に戻す。
+	  cat $C/cpuinfo_min_freq > $C/scaling_min_freq 2>/dev/null
 	  sync; t "records written (boot $BOOTN)"; sync; beep_short 1 ) &
 fi
 
