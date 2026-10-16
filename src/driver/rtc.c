@@ -76,6 +76,11 @@ static inline int rtc_is_leap_year(unsigned int year) {
  * Returns number of days per month, month being (base 0).
  */
 int rtc_days_per_month(unsigned int year, unsigned int month) {
+    // A caller holding an unset or garbage date (the RTC could not be read)
+    // must not index past the table: that was a boot crash on 2026-10-16
+    // when /dev/rtc was missing.
+    if (month >= 12)
+        month = 11;
     return (rtc_is_leap_year(year) && month == 1) + RTC_DAYS_PER_MONTH[month];
 }
 
@@ -248,6 +253,15 @@ void rtc_get_clock(struct rtc_date *rd) {
 #ifdef EMULATOR_BUILD
     *rd = g_rtc_date;
 #else
+    // Always hand back a valid date, so a failed read (no /dev/rtc, as when
+    // udev's coldplug did not run) leaves the callers with a sane value
+    // instead of whatever was on their stack.
+    rd->year = 2023;
+    rd->month = 1;
+    rd->day = 1;
+    rd->hour = 0;
+    rd->min = 0;
+    rd->sec = 0;
     int fd = open(RTC_DEV, O_RDONLY);
     if (fd >= 0) {
         struct rtc_time rt;

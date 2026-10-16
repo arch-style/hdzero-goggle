@@ -200,6 +200,37 @@ static void boot_workers_start(void) {
     }
 }
 
+#ifdef HDZGOGGLE2
+// HDZ_DEFER_PORT1=1 (set by the card's rc-exp.sh): keep everything on I2C
+// port 1 (the IT66121 HDMI transmitter and the IMU) off the path to the first
+// picture. The gate in i2c.c holds that port closed until ~7.6 s after
+// power-on, so with udev's coldplug gone the main thread would otherwise sit
+// in IT66121_init() and the IMU join for up to a second. The worker brings the
+// transmitter up (blocking on the gate), applies the phase the source switch
+// parked, then collects the IMU and arms head tracking.
+static bool defer_port1 = false;
+static pthread_t port1_thread;
+
+static void *port1_worker(void *arg) {
+    (void)arg;
+    log_thread_id("port 1 init");
+    uint32_t t0 = time_ms();
+    IT66121_init();
+    it66121_defer_end();
+    LOGI("boot: hdmi out up (deferred) after %ums", time_ms() - t0);
+    if (imu_init_running) {
+        pthread_join(imu_init_thread, NULL);
+        imu_init_running = false;
+    }
+    if (imu_up)
+        ht_set_imu_ready();
+    else
+        LOGE("motion sensor did not come up, head tracking stays idle");
+    LOGI("boot: motion sensor collected (deferred) after %ums", time_ms() - t0);
+    return NULL;
+}
+#endif
+
 static void device_init(void) {
     self_test();
 
@@ -220,7 +251,19 @@ static void device_init(void) {
 
     // On ports 1 and 3, and nothing before the switch reads them.
     IT66021_init();
-    IT66121_init();
+#ifdef HDZGOGGLE2
+    if (defer_port1) {
+        it66121_defer_begin();
+        if (pthread_create(&port1_thread, NULL, port1_worker, NULL) == 0) {
+            pthread_detach(port1_thread);
+        } else {
+            it66121_defer_end();
+            defer_port1 = false;
+            IT66121_init();
+        }
+    } else
+#endif
+        IT66121_init();
     fans_top_setspeed(g_setting.fans.top_speed);
 }
 
@@ -309,6 +352,14 @@ int main(int argc, char *argv[]) {
     // 1. Recall configuration
     settings_init();
     settings_load();
+#ifdef HDZGOGGLE2
+    {
+        const char *e = getenv("HDZ_DEFER_PORT1");
+        defer_port1 = e && e[0] == '1';
+        if (defer_port1)
+            LOGI("boot: port 1 (hdmi out, motion sensor) deferred past the first picture");
+    }
+#endif
 
     // The two font sets are about 850ms of card reads and only settings_load()
     // has to have happened first, so they start here: in before anything asks,
@@ -396,13 +447,26 @@ int main(int argc, char *argv[]) {
     // load that was running beside it, for work that takes 94ms and 92ms when
     // they do not meet. Waiting is free on the boots where the worker has
     // already finished, which is most of them.
+    // HDZ_OSD_BEFORE_TUNER=1 (card experiments): osd_init() and
+    // ui_osd_element_pos_init() only build LVGL objects, so they can run while
+    // the tuner worker still owns its I2C bus instead of after it; the OLED,
+    // Display_UI_init() and ims_init() talk to the FPGA/OLED on that bus and
+    // keep waiting.
+    const char *osd_first_env = getenv("HDZ_OSD_BEFORE_TUNER");
+    bool osd_first = osd_first_env && osd_first_env[0] == '1';
+    if (osd_first) {
+        BOOT_STEP("osd init (before tuner)", osd_init());
+        BOOT_STEP("osd element pos (before tuner)", ui_osd_element_pos_init());
+    }
     BOOT_STEP("wait for the tuner bus", HDZero_open_async_wait());
     BOOT_STEP("oled startup", screen.start_up());
     BOOT_STEP("display ui init", Display_UI_init());
     BOOT_STEP("oled pattern", screen.pattern(0, 0, 0));
-    BOOT_STEP("osd init", osd_init());
+    if (!osd_first)
+        BOOT_STEP("osd init", osd_init());
     BOOT_STEP("ims init", ims_init());
-    BOOT_STEP("osd element pos", ui_osd_element_pos_init());
+    if (!osd_first)
+        BOOT_STEP("osd element pos", ui_osd_element_pos_init());
     LOGI("boot phase: display and osd %ums", time_ms() - phase_ms);
 
 #undef BOOT_STEP
@@ -423,6 +487,11 @@ int main(int argc, char *argv[]) {
     // that call, but it does nothing until told the sensor is up. Wait for the
     // async init if there was one, then open the gate. The gate is opened on
     // every path, async or not: without it the head tracker never reads.
+#ifdef HDZGOGGLE2
+    if (defer_port1) {
+        // port1_worker joins the IMU and opens the gate after the picture.
+    } else
+#endif
     if (imu_init_running) {
         step_ms = time_ms();
         pthread_join(imu_init_thread, NULL);
@@ -433,6 +502,11 @@ int main(int argc, char *argv[]) {
     // unbounded loop with the I2C mutex held, so a 100Hz timer reading a
     // sensor that never answers is a thread that never returns, on the bus the
     // FPGA and the tuner also use.
+#ifdef HDZGOGGLE2
+    if (defer_port1)
+        ; // see port1_worker
+    else
+#endif
     if (imu_up)
         ht_set_imu_ready();
     else

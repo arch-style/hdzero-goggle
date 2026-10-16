@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1583,6 +1584,100 @@ static void efuse_read_both(int macro, int j, uint32_t *d0, uint32_t *d1) {
     SPI_Read(0x3, 0x7D8, d0, d1);
 }
 
+// HDZ_EFUSE_CACHE=1 (card experiments): the efuse is programmed once at the
+// factory, and reading macros 2..11 of both chips register by register over
+// the I2C-bridged SPI takes ~0.4 s of every boot. Macros 0 and 1 (chip and
+// calibration ids, 14 registers) are still read from the chips each boot and
+// used as the key; when they match the card's cache, macros 2.. come from the
+// cache and the walk is skipped. Any mismatch, short file or bad hash means a
+// normal read, which then rewrites the cache.
+#define EFUSE_CACHE_FILE "/mnt/extsd/efuse-cache.bin"
+#define EFUSE_CACHE_MAGIC 0x46455a48u // 'HZEF'
+#define EFUSE_CACHE_KEY 32
+
+struct efuse_cache {
+    uint32_t magic;
+    uint32_t version;
+    unsigned char key[EFUSE_CACHE_KEY];
+    EFUSE_T e0;
+    EFUSE_T e1;
+    uint32_t hash;
+};
+
+static bool efuse_cache_enabled(void) {
+    const char *e = getenv("HDZ_EFUSE_CACHE");
+    return e && e[0] == '1';
+}
+
+static uint32_t efuse_cache_hash(const struct efuse_cache *c) {
+    const unsigned char *p = (const unsigned char *)c;
+    uint32_t h = 2166136261u;
+    for (unsigned k = 0; k < offsetof(struct efuse_cache, hash); k++) {
+        h ^= p[k];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// Macro 0 regs 66..67 and macro 1 regs 0..11 of both chips, as read this boot.
+static void efuse_cache_key(unsigned char *key) {
+    memset(key, 0, EFUSE_CACHE_KEY);
+    memcpy(key, &efuse0.dat[0][66], 2);
+    memcpy(key + 2, &efuse0.dat[1][0], 12);
+    memcpy(key + 16, &efuse1.dat[0][66], 2);
+    memcpy(key + 18, &efuse1.dat[1][0], 12);
+}
+
+static bool efuse_cache_load(void) {
+    struct efuse_cache c;
+    unsigned char key[EFUSE_CACHE_KEY];
+    FILE *fp = fopen(EFUSE_CACHE_FILE, "rb");
+    if (!fp) {
+        LOGI("efuse: no cache at %s", EFUSE_CACHE_FILE);
+        return false;
+    }
+    size_t n = fread(&c, 1, sizeof(c), fp);
+    fclose(fp);
+    if (n != sizeof(c) || c.magic != EFUSE_CACHE_MAGIC || c.version != 1 ||
+        c.hash != efuse_cache_hash(&c)) {
+        LOGI("efuse: cache unreadable (%u bytes), reading the chips", (unsigned)n);
+        return false;
+    }
+    efuse_cache_key(key);
+    if (memcmp(key, c.key, EFUSE_CACHE_KEY) != 0) {
+        LOGI("efuse: cache key differs, reading the chips");
+        return false;
+    }
+    for (int m = 2; m < EFUSE_NUM; m++) {
+        memcpy(efuse0.dat[m], c.e0.dat[m], EFUSE_SIZE);
+        memcpy(efuse1.dat[m], c.e1.dat[m], EFUSE_SIZE);
+    }
+    LOGI("efuse: macros 2..%d of both chips from the cache", EFUSE_NUM - 1);
+    return true;
+}
+
+static void efuse_cache_store(void) {
+    struct efuse_cache c;
+    memset(&c, 0, sizeof(c));
+    c.magic = EFUSE_CACHE_MAGIC;
+    c.version = 1;
+    efuse_cache_key(c.key);
+    memcpy(&c.e0, &efuse0, sizeof(EFUSE_T));
+    memcpy(&c.e1, &efuse1, sizeof(EFUSE_T));
+    c.hash = efuse_cache_hash(&c);
+    FILE *fp = fopen(EFUSE_CACHE_FILE ".new", "wb");
+    if (!fp) {
+        LOGI("efuse: cannot write the cache");
+        return;
+    }
+    size_t n = fwrite(&c, 1, sizeof(c), fp);
+    fclose(fp);
+    if (n == sizeof(c) && rename(EFUSE_CACHE_FILE ".new", EFUSE_CACHE_FILE) == 0)
+        LOGI("efuse: cache written (%u bytes)", (unsigned)n);
+    else
+        LOGI("efuse: cache write failed");
+}
+
 // The two-chip walk. Mirrors DM6302_EFUSE1() exactly, including where each
 // chip stops early: band_num can differ between the two, and so can the
 // frequency sanity check that ends a band's read, so both are tracked per
@@ -1591,6 +1686,7 @@ void DM6302_EFUSE1_both(void) {
     int i, j;
     uint32_t r0, r1;
     int band_max;
+    bool use_cache = efuse_cache_enabled();
 
     memset((char *)&efuse0, 0, sizeof(EFUSE_T));
     memset((char *)&efuse1, 0, sizeof(EFUSE_T));
@@ -1622,8 +1718,9 @@ void DM6302_EFUSE1_both(void) {
         band_max = efuse1.macro.m0.band_num;
 
     LOGI("EFUSE1 both, s3, %d/%d", efuse0.macro.m0.band_num, efuse1.macro.m0.band_num);
+    bool from_cache = use_cache && efuse_cache_load();
 
-    for (i = 2; i < band_max + 2; i++) { // read macro 2~11
+    for (i = 2; !from_cache && i < band_max + 2; i++) { // read macro 2~11
         bool in0 = (i < efuse0.macro.m0.band_num + 2);
         bool in1 = (i < efuse1.macro.m0.band_num + 2);
         bool go0, go1;
@@ -1669,7 +1766,9 @@ void DM6302_EFUSE1_both(void) {
         }
     }
 
-    LOGI("EFUSE1 both, s4");
+    LOGI("EFUSE1 both, s4%s", from_cache ? " (from cache)" : "");
+    if (use_cache && !from_cache)
+        efuse_cache_store();
 
     // EFUSE_CFG = 0, EFUSE_RST = 0
     SPI_Write(0, 0x3, 0x7D0, 0x00000000);

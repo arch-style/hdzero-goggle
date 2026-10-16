@@ -87,6 +87,45 @@ uint32_t vclk_phase[VIDEO_SOURCE_NUM];
 uint32_t pclk_phase_load[VIDEO_SOURCE_NUM];
 uint32_t pclk_phase[VIDEO_SOURCE_NUM];
 
+// Port 1 (R_I2C: the IT66121 HDMI transmitter, the IMU) is held closed by the
+// I2C gate until ~7.6 s after power-on, so touching the IT66121 from the
+// picture path would stall the first picture. With HDZ_DEFER_PORT1 set,
+// main.c brings the IT66121 up on a worker instead and the phase requested
+// by pclk_phase_set() in the meantime is kept here and applied when the
+// worker is done.
+static pthread_mutex_t it66121_defer_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool it66121_deferred = false;
+static int it66121_pending_phase = -1;
+
+void it66121_defer_begin(void) {
+    pthread_mutex_lock(&it66121_defer_lock);
+    it66121_deferred = true;
+    it66121_pending_phase = -1;
+    pthread_mutex_unlock(&it66121_defer_lock);
+}
+
+void it66121_defer_end(void) {
+    pthread_mutex_lock(&it66121_defer_lock);
+    it66121_deferred = false;
+    int pending = it66121_pending_phase;
+    it66121_pending_phase = -1;
+    pthread_mutex_unlock(&it66121_defer_lock);
+    if (pending >= 0) {
+        IT66121_set_phase((pending >> 4) & 3, (pending >> 7) & 1);
+        LOGI("hdmi out: deferred phase 0x%x applied", pending);
+    }
+}
+
+// True when the phase was parked for the worker instead of written now.
+static bool it66121_phase_deferred(uint32_t phase) {
+    pthread_mutex_lock(&it66121_defer_lock);
+    bool deferred = it66121_deferred;
+    if (deferred)
+        it66121_pending_phase = (int)phase;
+    pthread_mutex_unlock(&it66121_defer_lock);
+    return deferred;
+}
+
 uint8_t vclk_phase_read_file(char *file_path) {
     FILE *file;
     char line[256];
@@ -568,7 +607,10 @@ void pclk_phase_set(video_source_t source) {
     csic_pclk_invert_set((pclk_phase[source] >> 3) & 1);
 
     // bit [5:4] hdmi out  bit[7]
-    IT66121_set_phase((pclk_phase[source] >> 4) & 3, (pclk_phase[source] >> 7) & 1);
+    if (it66121_phase_deferred(pclk_phase[source]))
+        LOGI("hdmi out: phase 0x%x parked until port 1 opens", pclk_phase[source]);
+    else
+        IT66121_set_phase((pclk_phase[source] >> 4) & 3, (pclk_phase[source] >> 7) & 1);
 
     // bit[6] oled
     I2C_Write(ADDR_AL, 0x14, (pclk_phase[source] >> 6) & 1);

@@ -81,6 +81,11 @@ extern hw_status_t g_hw_stat;
 extern int fhd_req;
 
 void hw_stat_init();
+#ifdef HDZGOGGLE2
+// Deferred HDMI-out (IT66121, I2C port 1) bring-up, see hardware-goggle2.c.
+void it66121_defer_begin(void);
+void it66121_defer_end(void);
+#endif
 
 void hw_screen_on(int bON);
 // 0 = UI, 1 = the live source. Reopens the M0 when the tuner is open.
