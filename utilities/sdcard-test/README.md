@@ -141,18 +141,20 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 
 ### 5d. Goggle 2 の起動時間の実験 (自分の Goggle 2 だけ)
 
-フラッシュの 2 か所に、カードを見に行く入口を足してある (2026-10-16)。
-カードに実験用のスクリプトが無いか、カードを抜けば純正どおりに動く。
-足した後のファイルと元のファイルは `goggle2-flash/` にある。
+フラッシュの 3 か所を変えてある (2026-10-16、17)。カードに実験用の
+スクリプトが無いか、カードを抜けば、rcS のクロックの固定 (15 秒で戻る) と
+印のほかは純正どおりに動く。足した後のファイルと元のファイルは
+`goggle2-flash/` にある。
 
 | 場所 | 入口 | カードのスクリプト |
 |---|---|---|
 | アプリ領域 `/mnt/app/script/rc.sh` (先頭) | `rc-exp.sh` があれば rc.sh の代わりに実行。0 以外で終われば純正を続ける | `rc-exp.sh` |
-| 上書き領域 `/etc/init.d/rc.final` (S スクリプトの繰り返し) | カードのマウント後 (S01app より後) の S スクリプトごとに `init-exp.sh <パス>` を呼ぶ。0 なら済んだもの | `init-exp.sh` |
+| 上書き領域 `/etc/init.d/rc.final` (S スクリプトの繰り返し) | カードのマウント後 (S01app より後) の S スクリプトごとに `init-exp.sh <パス>` を呼ぶ。0 なら済んだもの。各 S スクリプトの前に dmesg へ `bootmark:` の印を書く | `init-exp.sh` |
+| 上書き領域 `/etc/init.d/rcS` (新規、純正の写し) | 先頭で CPU の最低クロックを最高に固定し、15 秒後に戻す。各段の前に `bootmark:` の印 | — |
 
-元に戻すとき、rc.final は上書き領域のファイル
-`/overlay/upperdir/etc/init.d/rc.final` を消す。`/etc/init.d/rc.final` を
-消してはいけない (元のファイルまで隠れて rc.sh が走らなくなる)。rc.sh は
+元に戻すとき、rc.final と rcS は上書き領域のファイル
+`/overlay/upperdir/etc/init.d/rc.final`、`.../rcS` を消す。`/etc/init.d/` の
+側を消してはいけない (元のファイルまで隠れて起動しなくなる)。rc.sh は
 `goggle2-flash/rc.sh.orig` を書き戻す。どちらも起動しなくなったら SD からの
 緊急更新 (`HDZG_OS.bin` ほか 3 個) で全部戻る。
 
@@ -170,7 +172,8 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 - rc.sh の `dispw` (画面の設定) は外せない。外すと fork は lvgl_init で落ち、
   純正も止まる。裏で走らせて、アプリの前に終わりを待つのはよい。
 - S50usb (ADB とカメラ機能の USB の準備) は要らない。Goggle 2 には USB の口が無い。
-- S10udev は動作中の SD の抜き差しでのマウントを担うので止めない。
+- S10udev は udevd を裏で起動するだけでよい (一斉認識の trigger と settle は
+  省ける)。規則が作るリンクのうち要るのは `/dev/rtc` だけで、`init-exp.sh` が作る。
 - アプリと録画プロセスは同じ共有ライブラリ (約 8MB) を使う。I2C を待つ間に
   先読みすると (`preload.goggle2.txt` をカードの `preload.txt` に)、アプリの
   起動が速くなる。
@@ -179,6 +182,24 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
   `dispw -x` が /mnt/app/ko から insmod するだけなので、待ちを 100 ms に
   書き換えた写し (`goggle2-ko/disp.ko`) をカードの `ko/` に置けば、
   rc-exp.sh と init-exp.sh の `dispw_x` がそれを入れる。フラッシュは触らない。
+- 起動の揺れ (同じ設定で 0.5 秒) は CPU のクロック。ondemand は負荷を 2 秒に
+  1 回しか見ず、多くの回は 816 MHz のまま起動する。rcS の写しの先頭と
+  `init-exp.sh` (S10udev) で最低クロックを最高に固定し、`rc-exp.sh` が記録の後に戻す。
+- OSD のフォント (BTFL で 4.3MB) は、カードの `resource/OSD/FC/` にあれば
+  フラッシュより先にそこから読まれる。純正の `BTFL_000.bmp` と
+  `BTFL_FHD_000.bmp` を同じ中身のまま置くと、読み込みが 0.8 秒から 0.4 秒になり、
+  OSD の組み立てでの待ち (ときどき 0.2〜0.4 秒) が無くなる。
+- `app-sampler.sh` は測るときは `.off` にしておく (動いていると受信チップの
+  初期化が延びる)。`check-sd.sh` が NG にする。
+
+起動を測るカード (HDZERO_BOOT、32GB、FAT32 の 64KB クラスタ) に置くもの:
+`rc-exp.sh`、`init-exp.sh`、`develop.sh` (= develop.sh.dual)、`develop.g2.sh`
+(= develop.sh.vopatch)、`goggle2-*.sh`、`wifi-hello.sh` と `wifi-hello.txt`、
+`HDZGOGGLE` と `HDZGOGGLE.features` (`i2c_gate`)、`stage.txt`、`preload.txt`、
+`ko/disp.ko`、`g2lib/` (47 本と links.txt)、`goggle2-flash/`、
+`resource/OSD/FC/BTFL_000.bmp` と `BTFL_FHD_000.bmp` (ゴーグルの /mnt/app から写す)。
+起動ごとの記録は `boot-logs/` (アプリのログ、dmesg、カードより前の dmesg と
+クロックの履歴 `early-stage<段階>.txt`)。
 
 時刻はカードの `init-exp.log` と `rc-exp.log` に残る。カードの起動スクリプトの
 補助 (`wifi-hello.sh`) で Wi-Fi の子機モードから SSH で入れる (ゴーグルは

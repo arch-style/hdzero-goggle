@@ -164,6 +164,7 @@ svg .st-muted { stroke: var(--muted); }
     <li><a href="#changes">変えたもの・戻し方</a></li>
     <li><a href="#handoff">引き継ぎ</a></li>
     <li><a href="#ideas">次の高速化</a></li>
+    <li><a href="#kernel">カーネルとブートローダ</a></li>
     <li><a href="#glossary">用語</a></li>
   </ol>
 </nav>
@@ -180,10 +181,10 @@ svg .st-muted { stroke: var(--muted); }
   <h2><span class="tag">01 Status</span>進捗</h2>
   <div class="status-grid">
     <div class="panel bignum">
-      <span class="label">いまの HDZero の映像まで (電源から、rcS の写しを入れた 5 回)</span>
-      <span class="value">6.06<small> – 6.48 s</small></span>
-      <span class="sub">中央値 6.37 秒。純正 約 22 秒、fork 着手時 16.3 秒、2026-10-16 朝 (C2) 10.13 秒、同夜 7.31 秒から。目標は 5 秒台。</span>
-      <div class="track" role="img" aria-label="22 秒から 5 秒への道のりのうち約 92% まで進んだ"><span id="goalbar" style="width:92%"></span></div>
+      <span class="label">いまの HDZero の映像まで (電源から、フォントをカードに置いた 5 回)</span>
+      <span class="value">6.09<small> – 6.27 s</small></span>
+      <span class="sub">中央値 6.13 秒 (5 回とも起動時のクロックが遅い側)。純正 約 22 秒、fork 着手時 16.3 秒、2026-10-16 朝 (C2) 10.13 秒、同夜 7.31 秒から。目標は 5 秒台。</span>
+      <div class="track" role="img" aria-label="22 秒から 5 秒への道のりのうち約 93% まで進んだ"><span id="goalbar" style="width:93%"></span></div>
       <div class="track-scale"><span>22 s (純正)</span><span>目標 5 s</span></div>
     </div>
     <div class="panel">
@@ -196,9 +197,9 @@ svg .st-muted { stroke: var(--muted); }
         <li><span class="chip ok">完了</span><span>udevd だけ起動、ライブラリと本体をカードから、受信チップの efuse を控える、直接起動</span></li>
         <li><span class="chip ok">完了</span><span>64 KB クラスタのカード HDZERO_BOOT。FAT の読み込み 0.62 秒 → 0.12 秒</span></li>
         <li><span class="chip ok">完了</span><span>カードより前のばらつきの原因は CPU のクロック (816 / 1104 MHz)。rcS の写しで起動中は最高に固定</span></li>
-        <li><span class="chip todo">未着手</span><span>カード側の小さな詰め (ライブラリの写し待ち、OSD の組み立て)</span></li>
+        <li><span class="chip ok">完了</span><span>OSD のフォントをカードから読む (OSD の組み立ての待ちが消えた)。カード側の詰めはここで一区切り</span></li>
         <li><span class="chip todo">未着手</span><span>F: アナログ入力の起動を測って縮める</span></li>
-        <li><span class="chip todo">未着手</span><span>恒久化、カーネルとブートローダ (UART が要る。残りの揺れ 0.3 秒もここ)</span></li>
+        <li><span class="chip todo">未着手</span><span>カーネルとブートローダ (10 Kernel の節。残りの揺れ 0.3 秒もここ)、恒久化</span></li>
       </ul>
     </div>
   </div>
@@ -445,6 +446,12 @@ svg .st-muted { stroke: var(--muted); }
       <p class="why">rcS の写しの先頭で最低クロックを最高に固定し、15 秒後に戻す。残りの差 0.3 秒は rcS より前 (preinit) で、カーネルかブートローダでしか直せない。</p>
     </article>
     <article class="find">
+      <span class="kicker">読み込み</span>
+      <h3>OSD のフォントはカードから読める</h3>
+      <p>OSD の組み立ては、フォント 2 つ (BTFL で 1.3MB と 3.0MB) を読む別の流れを待ちます。フラッシュからは 0.7〜0.9 秒かかり、間に合わない回は 0.2〜0.4 秒待っていました。アプリはカードの <code>resource/OSD/FC/</code> を先に探すので、純正と同じ中身のフォントを置くと 0.4 秒で読め、待ちが消えました。</p>
+      <p class="why">探す順は <code>src/core/osd.c</code> の load_fc_osd_font。BTFL 以外の機体設定では、そのフォントを置かない限りフラッシュから読む。</p>
+    </article>
+    <article class="find">
       <span class="kicker">失敗から</span>
       <h3>道具の消し忘れが測定を乱した</h3>
       <p>新しいカードを作るとき、前のカードで止めていた <code>app-sampler.sh</code> を有効なまま写しました。50 ms ごとにコマンドを起動し続けるので、受信チップとのやり取りが 2 倍に延び、映像が 0.4 秒遅れました。止めると元に戻りました。</p>
@@ -519,7 +526,8 @@ svg .st-muted { stroke: var(--muted); }
         <tr class="okrow"><td>段階 41 – 46</td><td>rc.final に dmesg の印を足す (測るだけ)</td><td><span class="chip ok">成功</span> 揺れは rc.final より前</td><td class="num">4.93 – 5.95</td><td class="num">6.54 – 7.25</td></tr>
         <tr class="okrow"><td>段階 47 – 53</td><td>クロックの履歴を記録。偶数の段階は S10udev から最高クロック</td><td><span class="chip ok">成功</span> 揺れは起動時のクロック</td><td class="num">4.72 – 5.83</td><td class="num">6.04 – 7.19</td></tr>
         <tr class="okrow"><td>段階 54 – 58</td><td>全回、S10udev から最高クロック</td><td><span class="chip ok">成功 ×5</span></td><td class="num">4.72 – 5.64</td><td class="num">6.05 – 6.83</td></tr>
-        <tr class="nowrow"><td>段階 59 – 63</td><td>rcS の写しを上書き領域に置き、rcS の先頭から最高クロック</td><td><span class="chip now">現在 ×5</span></td><td class="num">4.78 – 5.18</td><td class="num"><b>6.38 / 6.06 / 6.14 / 6.37 / 6.48</b></td></tr>
+        <tr class="okrow"><td>段階 59 – 63</td><td>rcS の写しを上書き領域に置き、rcS の先頭から最高クロック</td><td><span class="chip ok">成功 ×5</span></td><td class="num">4.78 – 5.18</td><td class="num">6.38 / 6.06 / 6.14 / 6.37 / 6.48</td></tr>
+        <tr class="nowrow"><td>段階 64 – 68</td><td>純正のフォント 2 つ (4.3MB) をカードの <code>resource/OSD/FC/</code> に置く</td><td><span class="chip now">現在 ×5</span> OSD の待ちが消えた</td><td class="num">5.01 – 5.13</td><td class="num"><b>6.27 / 6.13 / 6.09 / 6.24 / 6.11</b></td></tr>
       </tbody>
     </table>
   </div>
@@ -572,7 +580,7 @@ S10udev で          # クロックの履歴を記録、
         <tr><td>アプリ領域 <code>/mnt/app/setting.ini</code></td><td>緊急更新後に控えから書き戻し。その後はメニューでの変更 (Wi-Fi オン、入力など)</td><td class="num">—</td><td>控え <code>logs/goggle2/2026-10-15-flash-backup/setting.ini</code></td></tr>
         <tr><td>fork 本体 (カード)</td><td>コミット 6d2d2fd のビルド。I2C の関門、1 番の後回し、OSD の前倒し、efuse の控え、時計の修正。中の build 文字列は古いまま (55038e5-dirty)</td><td class="num">md5 d8e186af…</td><td>前の本体 <code>logs/goggle2/2026-10-16-udev-stages/HDZGOGGLE.before</code> (96459c13…)</td></tr>
         <tr><td>disp.ko (カードの <code>ko/</code>)</td><td>disp_vdpo_disable() の待ちを 1000 ms から 100 ms に (4 バイト)</td><td class="num">md5 36f9ccd6…<br>元 01f5f9a0…</td><td>カードの <code>ko/disp.ko</code> を消せば純正の <code>/mnt/app/ko/disp.ko</code></td></tr>
-        <tr><td>SD カード (HDZERO_BOOT)</td><td>32GB、FAT32 の 64KB クラスタ。実験用スクリプト、<code>g2lib/</code>、<code>ko/</code>、目印 <code>HDZGOGGLE.features</code>、<code>stage.txt</code> ほか。<code>app-sampler.sh</code> は .off のまま。前の NO NAME2 (64GB) は退役</td><td class="num">—</td><td><code>rc-exp.sh</code> / <code>init-exp.sh</code> を消すかカードを抜く</td></tr>
+        <tr><td>SD カード (HDZERO_BOOT)</td><td>32GB、FAT32 の 64KB クラスタ。実験用スクリプト、<code>g2lib/</code>、<code>ko/</code>、目印 <code>HDZGOGGLE.features</code>、<code>stage.txt</code> ほか。<code>app-sampler.sh</code> は .off のまま。<code>resource/OSD/FC/</code> に純正のフォント 2 つ (md5 5bc70f8e、85732b81)。前の NO NAME2 (64GB) は退役</td><td class="num">—</td><td><code>rc-exp.sh</code> / <code>init-exp.sh</code> を消すかカードを抜く</td></tr>
       </tbody>
     </table>
   </div>
@@ -660,8 +668,8 @@ S10udev で          # クロックの履歴を記録、
     <table>
       <thead><tr><th>案</th><th>中身</th><th>見込み</th><th>危うさ</th><th>状態</th></tr></thead>
       <tbody>
-        <tr><td><b>ライブラリの写し待ち</b></td><td>起動が速くなり、アプリがカードからのライブラリの写し (7.1MB、0.55 秒) の終わりを 0.1 秒待つようになった。写す量を減らすか、写しの順番を変える</td><td class="num">0.1 s</td><td>低</td><td><span class="chip todo">次</span></td></tr>
-        <tr><td><b>OSD の組み立て</b></td><td>ふだん 0.07〜0.09 秒が、ときどき 0.3〜0.4 秒になる。カードから文字の画像を探す処理と関係するかを測る</td><td class="num">0.1 – 0.3 s (遅い回)</td><td>低</td><td><span class="chip todo">次</span></td></tr>
+        <tr><td><b>ライブラリの写し待ち</b></td><td>起動が速くなり、アプリがカードからのライブラリの写し (7.1MB、0.55 秒) の終わりを 0.1 秒待つようになった。写す量を減らすか、写しの順番を変える</td><td class="num">≤0.1 s</td><td>低。ただし 47 本すべてを使っていて減らせず、写しはカードの読み出しの上限近く</td><td><span class="chip todo">保留</span></td></tr>
+        <tr><td><b>OSD の組み立て</b></td><td>フォントをカードから読むようにして、ときどきの 0.2〜0.4 秒の待ちが消えた (段階 64〜68)</td><td class="num">0.2 s (済み)</td><td>低</td><td><span class="chip ok">完了</span></td></tr>
         <tr><td><b>アプリ</b></td><td>exec から main まで 0.16 秒。main から映像まで 1.2〜1.4 秒のうち、受信チップの初期化 (2 番) が 0.8 秒</td><td class="num">0.1 – 0.2 s</td><td>低</td><td><span class="chip todo">未着手</span></td></tr>
         <tr><td><b>rcS の中</b></td><td>アプリ領域 (JFFS2、12MB) のマウント 0.4 秒、UDISK のマウントと <code>mdev -s</code> 0.25 秒。fw_printenv は 0.05 秒。マウントはカーネルの設定 (JFFS2 の summary など) なしでは縮みにくい</td><td class="num">0.1 – 0.3 s</td><td>中。上書き領域の rcS の変更</td><td><span class="chip todo">未着手</span></td></tr>
         <tr><td><b>F</b></td><td>アナログ入力の起動を測る</td><td class="num">≈0.3 s (アナログ)</td><td>低</td><td><span class="chip todo">未着手</span></td></tr>
@@ -673,6 +681,39 @@ S10udev で          # クロックの履歴を記録、
   </div>
   <div class="callout good">
     <p><b>5 秒台への道筋の見立て:</b> カードと上書き領域だけでできるのは、上の小さな詰めで 6.0 秒前後まで。5 秒台にはカーネルとブートローダ (合わせて 2.6 秒) に手を入れる必要があり、そのためには UART でゴーグルの起動を見られるようにすること、PhoenixCard の復旧カードを手元に置くことが前提です。</p>
+  </div>
+</section>
+
+<!-- ============ 10. KERNEL ============ -->
+<section id="kernel">
+  <h2><span class="tag">10 Kernel</span>カーネルとブートローダ</h2>
+  <p>カードと上書き領域での詰めは、ここで一区切りです (2026-10-17、映像 6.09〜6.27 秒)。残る大きな塊は、電源から rcS が始まるまでの約 2.9 秒で、ここはカーネルとブートローダ (どちらも HDZero の非公開のビルド) の中です。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>区間</th><th>長さ</th><th>中身</th><th>手の入れ方</th></tr></thead>
+      <tbody>
+        <tr><td>ブートローダ</td><td class="num">≈1.4 s</td><td>boot0 と u-boot。<code>bootdelay=0</code>、<code>bootcmd=run hdzero_update setargs_nor boot_normal</code>、<code>hdzero_update=sprite_update</code> (毎回 SD の更新ファイルを確かめる)、<code>boot_normal</code> はカーネル 2.94MB を NOR から読んで bootm</td><td>SD の確かめを省く (緊急更新の経路に関わる)、boot0 からカーネルへ直接 (Allwinner の起動最適化ガイドの手法)、NOR の読み出しを速く</td></tr>
+        <tr><td>カーネル</td><td class="num">1.1 – 1.2 s</td><td>4.9.118 (#69、2025-07-15)。LZO の zImage。NOR は DTS で 100MHz の 2 線だが、測ると毎秒 5MB。起動時の CPU は多くの回で 816MHz</td><td>最初から最高クロックで起動する、要らないドライバを外す、NOR を DTS どおりの速さに。SDK (lindenis-org の V536) は公開、HDZero のカーネルの設定は未確認 (<code>/proc/config.gz</code> の有無も未確認)</td></tr>
+        <tr><td>preinit とマウント</td><td class="num">0.4 – 0.7 s</td><td>上書き領域 (JFFS2) のマウントと切り替え、inittab のマウントの行。読み出し専用の rootfs の中で、上書き領域からは変えられない。0.3 秒の揺れ (起動時のクロック) もここ</td><td>カーネルで最初から最高クロックにすれば揺れは消える見込み。rootfs を作り直すなら preinit も変えられる</td></tr>
+        <tr><td>rcS の中</td><td class="num">≈0.7 s</td><td>アプリ領域 (JFFS2、12MB) のマウント 0.4 秒、UDISK と <code>mdev -s</code> 0.25 秒。fw_printenv は 0.05 秒</td><td>上書き領域の rcS で変えられる。JFFS2 のマウントを速くするのはカーネルの設定 (summary) と領域の作り直しが要る見込み</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>UART は要るのか</h3>
+  <p>書き込むこと自体に UART は要りません。カーネルの領域は SSH から書けますし、壊れても PhoenixCard の復旧カードで boot0 から全体を戻せることを 2026-10-16 に確かめています。UART が要るのは、失敗したときに何が起きたかを見るためです。</p>
+  <ul class="plain">
+    <li><b>UART が無いと:</b> 新しいカーネルやブートローダで起動しなければ、画面は暗いままで手がかりがありません。1 回の失敗ごとに、復旧カードで全体を戻し、入口と rcS を入れ直し、設定を書き戻す必要があります。</li>
+    <li><b>UART があると:</b> ブートローダとカーネルの出力 (<code>console=ttyS0,115200</code>) を Mac で読めます。どこで止まったかが分かり、u-boot のコマンドで別のカーネルを試すこともできます。</li>
+    <li><b>端子:</b> メモリには PH7/PH8 とあるが根拠が残っておらず、基板のどこに出ているかは未確認。HDZero は回路図を公開しているとノートにあるが、これも未確認。</li>
+  </ul>
+  <h3>UART なしでも試せること</h3>
+  <ul class="plain">
+    <li>カーネルのコマンドライン (u-boot の環境変数) を <code>fw_setenv</code> で変える。書き間違えると起動しないので、復旧カードが前提。</li>
+    <li>復旧カードの手順を、壊れていない状態でもう一度通しておく (戻すのにかかる時間を測る)。</li>
+    <li>SDK のカーネルをビルドして、HDZero のカーネルとの違い (設定、DTS) を手元で調べる。書き込みは無い。</li>
+  </ul>
+  <div class="callout">
+    <p><b>決めてもらうこと:</b> ゴーグルを開けて UART の配線をするか。勧めは「先に UART をつないでから、カーネルとブートローダに手を入れる」。UART なしで進めると、失敗のたびに 15〜30 分ほどの復旧作業が要る見込み。</p>
   </div>
 </section>
 
@@ -692,6 +733,7 @@ S10udev で          # クロックの履歴を記録、
         <tr><th>PhoenixCard</th><td>Allwinner の Windows ツール。HDZG_OS.bin を書いたカードは boot0 から起動して全体を書き直す復旧カードになる</td></tr>
         <tr><th>上書き領域 (overlay)</th><td>書き換えできない OS 本体の上に、変更分だけを置く 512KB の領域</td></tr>
         <tr><th>先読み (preload)</th><td>後で使うファイルを先に読み、メモリに置いておくこと。段階 9 からは、カードから /tmp への写しに置き換えた</td></tr>
+        <tr><th>UART</th><td>基板のシリアルの端子。ブートローダとカーネルの出力を読み、u-boot を操作できる。USB シリアル変換器で Mac につなぐ</td></tr>
         <tr><th>ondemand</th><td>CPU のクロックを負荷に合わせて変える仕組み。このゴーグルでは負荷を 2 秒に 1 回だけ見る</td></tr>
         <tr><th>bootmark</th><td>rcS と rc.final が <code>/dev/kmsg</code> に書く区切りの印。dmesg にカーネルの時刻付きで残る</td></tr>
         <tr><th>クラスタ</th><td>FAT32 がファイルに割り当てる単位。大きいほど FAT が小さくなり、マウントが速い</td></tr>
@@ -790,7 +832,8 @@ S10udev で          # クロックの履歴を記録、
       ['段階 15–16 efuse の控え', 7.90, 'meas', '7.55 / 7.90 s'],
       ['段階 21–24 直接起動', 7.31, 'meas', '7.00–7.65 s'],
       ['段階 54–58 S10udev から最高クロック', 6.64, 'meas', '6.05–6.83 s'],
-      ['段階 59–63 rcS から最高クロック', 6.37, 'meas', '6.06–6.48 s']
+      ['段階 59–63 rcS から最高クロック', 6.37, 'meas', '6.06–6.48 s'],
+      ['段階 64–68 フォントをカードから', 6.13, 'meas', '6.09–6.27 s']
     ];
     var X0 = 200, X1 = 900, T = 24, top = 22, rowH = 44;
     var sx = function (t) { return X0 + (X1 - X0) * t / T; };
@@ -842,7 +885,7 @@ S10udev で          # クロックの履歴を記録、
   })();
 
   // goal progress: from 22 s to 5 s
-  var cur = 6.37, from = 22, goal = 5;
+  var cur = 6.13, from = 22, goal = 5;
   var pct = Math.round(100 * (from - cur) / (from - goal));
   var bar = document.getElementById('goalbar');
   if (bar) { bar.style.width = pct + '%'; bar.parentNode.setAttribute('aria-label', '22 秒から 5 秒への道のりのうち ' + pct + '% まで進んだ'); }
