@@ -149,6 +149,45 @@ if [ -f "$X" ]; then
 		say "APP_BEFORE_I2C=1 だが HDZGOGGLE.features が無いので、アプリは関門の後に起動する"
 	fi
 	say "設定: $(grep -E '^(SKIP_[A-Z0-9]+|LATE_[A-Z]+|PARALLEL_[A-Z]+|I2C_[A-Z_]+|PRELOAD|APP_[A-Z0-9_]+)=' "$X" | tr '\n' ' ')"
+	# goggle2-install-hooks.sh は、フラッシュの rc.sh と上書き領域の rc.final に
+	# 入口を書く唯一のカード側スクリプト。写しが手元の goggle2-flash/ と同一で、
+	# まだ DONE が無いときだけ、次の起動で一度書く。
+	IH="$SD/goggle2-install-hooks.sh"
+	if [ -f "$IH" ]; then
+		if [ -e "$SD/goggle2-install-hooks/DONE" ]; then
+			say "goggle2-install-hooks.sh は済み (DONE あり)"
+		elif [ "$(md5 -q "$SD/goggle2-flash/rc.sh" 2>/dev/null)" = "$(md5 -q "$ROOT/utilities/sdcard-test/goggle2-flash/rc.sh")" ] && [ "$(md5 -q "$SD/goggle2-flash/rc.final" 2>/dev/null)" = "$(md5 -q "$ROOT/utilities/sdcard-test/goggle2-flash/rc.final")" ]; then
+			ok "goggle2-install-hooks.sh: 次の Goggle 2 の起動で rc.sh と rc.final の入口をフラッシュに書く (写しは手元と同一)"
+		else
+			ng "goggle2-install-hooks.sh があるが、カードの goggle2-flash/rc.sh か rc.final が手元と違う"
+		fi
+	fi
+	# カードの ko/disp.ko は、rc-exp.sh と init-exp.sh の dispw_x が純正の
+	# disp.ko の代わりに insmod する (goggle2-ko/README.md)。手元の写しと
+	# 同一でなければ入れない (壊れた .ko を insmod すると画面が出ない)。
+	KO="$SD/ko/disp.ko"
+	if [ -f "$KO" ]; then
+		if [ "$(md5 -q "$KO")" = "$(cut -d' ' -f1 < "$ROOT/utilities/sdcard-test/goggle2-ko/disp.ko.md5" 2>/dev/null)" ]; then
+			ok "ko/disp.ko は goggle2-ko/disp.ko と同一 (1 秒待ちを 100 ms にした写し)"
+		else
+			ng "ko/disp.ko が goggle2-ko/disp.ko と違う。消すか入れ直す"
+		fi
+	else
+		say "ko/disp.ko は無い (純正の disp.ko、画面の切り替えごとに 1 秒待つ)"
+	fi
+	# g2lib/: アプリと録画プロセスの共有ライブラリの写し (段階 9 以降、init-exp.sh
+	# が /tmp/lib に写す)。手元の一覧 (goggle2-ko/g2lib.md5) と同一か。
+	if [ -d "$SD/g2lib" ]; then
+		bad=0
+		while read -r sum name; do
+			[ "$(md5 -q "$SD/g2lib/$name" 2>/dev/null)" = "$sum" ] || bad=$((bad + 1))
+		done < "$ROOT/utilities/sdcard-test/goggle2-ko/g2lib.md5"
+		if [ $bad -eq 0 ]; then
+			ok "g2lib/ の $(wc -l < "$ROOT/utilities/sdcard-test/goggle2-ko/g2lib.md5" | tr -d ' ') ファイルは手元の写しと同一"
+		else
+			ng "g2lib/ に手元と違うか無いファイルが $bad ある"
+		fi
+	fi
 	echo
 fi
 

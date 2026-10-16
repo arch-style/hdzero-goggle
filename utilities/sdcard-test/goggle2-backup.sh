@@ -42,7 +42,13 @@ rm -f /mnt/extsd/.wtest
 B=/mnt/extsd/goggle2-backup
 mkdir -p "$B" || exit 0
 cp /mnt/app/setting.ini "$B/setting.ini.last-boot"
-sync
+# 起動時間の実験 (develop.sh.dual が SYNC_BG=1 を渡す) では、ここの sync を
+# 裏に回す。
+if [ "$SYNC_BG" = 1 ]; then
+	sync &
+else
+	sync
+fi
 [ -e "$B/DONE" ] && exit 0
 
 P="$B/progress.txt"

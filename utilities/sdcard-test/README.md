@@ -156,6 +156,11 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 `goggle2-flash/rc.sh.orig` を書き戻す。どちらも起動しなくなったら SD からの
 緊急更新 (`HDZG_OS.bin` ほか 3 個) で全部戻る。
 
+入口を入れ直すとき (PhoenixCard や緊急更新のあと) は、SSH で書くか、カードに
+`goggle2-install-hooks.sh` と `goggle2-flash/rc.sh`、`goggle2-flash/rc.final` を
+置いて一度起動する。develop.sh.dual がアプリの前に呼び、いまの中身が純正か
+入口入りのときだけ書く。結果は `goggle2-install-hooks/result.txt`。
+
 分かったこと:
 - **I2C port 1 (IT66121, MCP3021, BMI270, NCT75) に、電源投入から早く触ると
   固まり、電源を切るまで戻らない。** 4.3 秒と 6.2 秒は失敗、7.6 秒は成功。
@@ -169,6 +174,11 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 - アプリと録画プロセスは同じ共有ライブラリ (約 8MB) を使う。I2C を待つ間に
   先読みすると (`preload.goggle2.txt` をカードの `preload.txt` に)、アプリの
   起動が速くなる。
+- 画面のモードの切り替え (`dispw -s vdpo ...`) に毎回 1 秒かかるのは、
+  disp.ko の disp_vdpo_disable() の最後にある 1000 ms の待ち。disp.ko は
+  `dispw -x` が /mnt/app/ko から insmod するだけなので、待ちを 100 ms に
+  書き換えた写し (`goggle2-ko/disp.ko`) をカードの `ko/` に置けば、
+  rc-exp.sh と init-exp.sh の `dispw_x` がそれを入れる。フラッシュは触らない。
 
 時刻はカードの `init-exp.log` と `rc-exp.log` に残る。カードの起動スクリプトの
 補助 (`wifi-hello.sh`) で Wi-Fi の子機モードから SSH で入れる (ゴーグルは

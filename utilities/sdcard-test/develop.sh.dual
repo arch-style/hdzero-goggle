@@ -46,7 +46,18 @@ elif grep -qi goggle2 "$STOCK"; then
 else
 	MODEL=v1
 fi
-( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) 2>/dev/null
+# 起動時間の実験 (init-exp.sh の段階 17 以降) では、起動の経路にある sync を
+# 裏に回す。カードの rc-exp.sh が後で sync する。
+SYNC_BG=0
+if [ "$(cat /tmp/exp-stage 2>/dev/null | tr -dc 0-9)" -ge 17 ] 2>/dev/null; then
+	SYNC_BG=1
+fi
+export SYNC_BG
+if [ "$SYNC_BG" = 1 ]; then
+	( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) > /dev/null 2>&1 &
+else
+	( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) 2>/dev/null
+fi
 
 if [ "$MODEL" = g2 ]; then
 	# 設定とフラッシュ全体の控え (緊急更新の前に取るもの)。読むだけ。初回だけ
@@ -56,6 +67,10 @@ if [ "$MODEL" = g2 ]; then
 	# 緊急更新で初期値に戻った setting.ini を、カードの控えで一度だけ書き戻す。
 	# 無ければ何もしない。控えを取った後に呼ぶので、書き戻す前の設定も残る。
 	[ -e /mnt/extsd/goggle2-restore-setting.sh ] && /bin/sh /mnt/extsd/goggle2-restore-setting.sh g2
+	# PhoenixCard や緊急更新で消えた、起動時間の実験用の入口 2 つ (rc.sh と
+	# rc.final) を一度だけ入れ直す。無ければ何もしない。理由と手順は
+	# goggle2-install-hooks.sh。フラッシュに書く唯一の控え系スクリプト。
+	[ -e /mnt/extsd/goggle2-install-hooks.sh ] && /bin/sh /mnt/extsd/goggle2-install-hooks.sh g2
 	# Wi-Fi で Mac から SSH で入れるように、ゴーグルの方から Mac へ ping を出す。
 	# 理由は wifi-hello.sh。宛先は wifi-hello.txt。無ければ何もしない。
 	[ -e /mnt/extsd/wifi-hello.sh ] && /bin/sh /mnt/extsd/wifi-hello.sh > /dev/null 2>&1 &

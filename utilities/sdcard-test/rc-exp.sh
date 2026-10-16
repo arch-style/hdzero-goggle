@@ -50,11 +50,46 @@ APP_BEFORE_I2C=1
 # 8.95 秒まで 1.33 秒、映像は電源から 10.8 秒。C2 (2026-10-16): port 1 だけ
 APP_I2C_GATED_PORTS="1"
 
+# 実験の段階 (init-exp.sh が stage.txt から決めて /tmp/exp-stage に書く)。
+# 1: udevd だけ + アプリの I2C は全 port を関門まで待たせる。2: udevd だけ +
+# port 1 だけ関門。それ以外: 上の既定。
+STAGE=$(cat /tmp/exp-stage 2>/dev/null)
+[ -n "$STAGE" ] || STAGE=0
+case "$STAGE" in
+1) APP_I2C_GATED_PORTS="1 2 3" ;;
+2|3|4|5|6|7|8|9|1[0-9]|2[0-9]) APP_I2C_GATED_PORTS="1" ;;
+esac
+# 段階 9 以降: init-exp.sh がカードの g2lib/ を /tmp/lib に写すので、アプリと
+# 録画プロセスにはそこから読ませる (LD_LIBRARY_PATH の先頭)。
+LIBCOPY=0
+case "$STAGE" in 9|1[0-9]|2[0-9]) LIBCOPY=1 ;; esac
+# 段階 10/11、13 以降: 案 E。fork 本体が HDZ_DEFER_PORT1 を見て、HDMI 出力
+# (IT66121) と IMU の port 1 の初期化を映像の後の別スレッドに回す。
+DEFER_PORT1=0
+case "$STAGE" in 10|11|1[3-9]|2[0-9]) DEFER_PORT1=1 ;; esac
+# 段階 14 以降: OSD の組み立て (lvgl だけ) をチューナー待ちの前に。
+OSD_BEFORE_TUNER=0
+case "$STAGE" in 1[4-9]|2[0-9]) OSD_BEFORE_TUNER=1 ;; esac
+# 段階 15 以降: チューナーの efuse (工場で焼かれた較正値) をカードに控え、
+# 2 回目からは macro 2 以降の読み出し (約 0.4 秒) を省く。
+EFUSE_CACHE=0
+case "$STAGE" in 1[5-9]|2[0-9]) EFUSE_CACHE=1 ;; esac
+# 段階 21 以降: develop.sh → develop.g2.sh の連鎖 (機種判定、控え、報告、
+# 本体の cp で 0.4〜0.5 秒) を通らず、ここから直接 fork を起動する。設定の
+# 書き戻しだけは前に同期で行い、控え、wifi-hello、起動しなかったときの純正への
+# 切り替え (8 秒後) と動作確認 (30 秒後) は起動の後ろに回す。
+FAST_LAUNCH=0
+case "$STAGE" in 2[1-9]) FAST_LAUNCH=1 ;; esac
+# この起動の通し番号 (カードの boot-logs/count)。アプリのログの写しの名前に使う。
+mkdir -p /mnt/extsd/boot-logs 2>/dev/null
+BOOTN=$(( $(tr -dc 0-9 < /mnt/extsd/boot-logs/count 2>/dev/null) + 1 ))
+echo "$BOOTN" > /mnt/extsd/boot-logs/count 2>/dev/null
+
 LOG=/mnt/extsd/rc-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG" 2>/dev/null
 }
-echo "--- boot SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS" >> "$LOG" 2>/dev/null
+echo "--- boot $BOOTN stage=$STAGE FAST=$FAST_LAUNCH LIBCOPY=$LIBCOPY DEFER_PORT1=$DEFER_PORT1 OSD_FIRST=$OSD_BEFORE_TUNER EFUSE_CACHE=$EFUSE_CACHE SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS" >> "$LOG" 2>/dev/null
 t "rc-exp start"
 
 function insmod_all()
@@ -70,6 +105,28 @@ function setup_uart()
 	echo 0x0300B0fc 0x35517751 > /sys/class/sunxi_dump/write
 }
 
+# dispw -x の代わり。カードの ko/disp.ko (純正 9.5.1 の disp.ko の写しで、
+# disp_vdpo_disable() の最後の 1000 ms 待ちを 100 ms に書き換えたもの、
+# goggle2-ko/) があればそれを insmod する。この待ちは画面のモードを切り替える
+# たび (起動時の 1080p50、入力の切り替えごと) に入っていた。vdpo.ko は純正の
+# まま。カードの写しが読めなければ純正の disp.ko に戻る。
+function dispw_x()
+{
+	if [ -f /mnt/extsd/ko/disp.ko ]; then
+		aww 0x07000160 0x083f10b7
+		if insmod /mnt/extsd/ko/disp.ko; then
+			t "disp.ko from card"
+		else
+			insmod /mnt/app/ko/disp.ko
+			t "disp.ko from card FAILED, stock loaded"
+		fi
+		mount -t debugfs none /sys/kernel/debug
+		insmod /mnt/app/ko/vdpo.ko
+	else
+		dispw_x
+	fi
+}
+
 function config_uart_vdpo()
 {
 	setup_uart
@@ -81,10 +138,10 @@ function config_uart_vdpo()
 		# init-exp.sh がもう始めている (EARLY_DISPW)。終わりはアプリの前に待つ。
 		t "dispw already started by init-exp"
 	elif [ "$PARALLEL_DISPW" = 1 ]; then
-		( dispw -x; dispw -s vdpo 1080p50; t "dispw done (background)" ) &
+		( dispw_x; dispw -s vdpo 1080p50; t "dispw done (background)" ) &
 		DISPW_PID=$!
 	else
-		dispw -x
+		dispw_x
 		dispw -s vdpo 1080p50
 	fi
 }
@@ -101,6 +158,27 @@ function beep()
         echo "1">/sys/class/gpio/gpio131/value
         sleep 1
         echo "0">/sys/class/gpio/gpio131/value
+}
+
+# ごく短いビープ (2ms) を n 回。実験の終わり (記録が全部カードに書けた時点)
+# に 1 回だけ鳴らす。鳴ったら電源を切ってよい。起動時には鳴らさない
+# (2026-10-16 の要望)。ブザーは純正の beep と同じ gpio131。
+function beep_short()
+{
+	n=${1:-1}
+	[ -e /sys/class/gpio/gpio131 ] || echo "131" > /sys/class/gpio/export 2>/dev/null
+	# rc.sh の時点ではまだ出力に設定されていない (アプリが後で設定する)。
+	# 設定しないと value を書いても鳴らない (2026-10-16 の起動時のビープ)。
+	echo out > /sys/class/gpio/gpio131/direction 2>/dev/null
+	# ブザーは GPIO の on/off だけで音量は変えられないので、長さで小さくする
+	# (アプリの短いビープは 50ms。100ms と 20ms は大きすぎた)。
+	while [ "$n" -gt 0 ]; do
+		echo "1" > /sys/class/gpio/gpio131/value
+		usleep 2000 2>/dev/null
+		echo "0" > /sys/class/gpio/gpio131/value
+		n=$((n - 1))
+		[ "$n" -gt 0 ] && { usleep 120000 2>/dev/null || sleep 1; }
+	done
 }
 
 function update_boot()
@@ -157,7 +235,57 @@ wait_dispw() {
 	fi
 }
 
+app_pid() {
+	for d in /proc/[0-9]*; do
+		if grep -qs HDZGOGGLE "$d/cmdline" 2>/dev/null; then
+			echo "${d#/proc/}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# FAST_LAUNCH: develop.g2.sh (develop.sh.vopatch) と同じことを、起動に要る順で
+# 最小限に。本体は init-exp.sh が /tmp に写したもの (大きさが合うとき)。
+# 0 以外で終われば、呼び出し側が従来どおり develop.sh を使う。
+fast_launch() {
+	[ -f /mnt/extsd/HDZGOGGLE ] || return 1
+	REPORT=/mnt/extsd/vo-patch.log
+	[ -e /mnt/extsd/goggle2-restore-setting.sh ] && /bin/sh /mnt/extsd/goggle2-restore-setting.sh g2
+	SZ=$(ls -l /mnt/extsd/HDZGOGGLE | awk '{print $5}')
+	if [ -s /tmp/HDZGOGGLE.staged.done ] && [ "$(cat /tmp/HDZGOGGLE.staged.done)" = "$SZ" ] \
+	   && [ "$(ls -l /tmp/HDZGOGGLE.staged | awk '{print $5}')" = "$SZ" ] \
+	   && mv /tmp/HDZGOGGLE.staged /tmp/HDZGOGGLE 2>/dev/null; then
+		APP=/tmp/HDZGOGGLE
+	elif cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE 2>/dev/null && chmod +x /tmp/HDZGOGGLE; then
+		APP=/tmp/HDZGOGGLE
+	else
+		return 1
+	fi
+	"$APP" &
+	t "app launched (fast, $APP)"
+	( [ -e /mnt/extsd/goggle2-backup.sh ] && SYNC_BG=1 /bin/sh /mnt/extsd/goggle2-backup.sh g2
+	  echo "platform=[fast launch] model=g2" >> /mnt/extsd/model-history.txt
+	  [ -e /mnt/extsd/wifi-hello.sh ] && /bin/sh /mnt/extsd/wifi-hello.sh ) > /dev/null 2>&1 &
+	( echo "--- boot ---"
+	  echo "app: $APP (fast launch from rc-exp.sh, stage $STAGE)"
+	  sleep 8
+	  if ! app_pid > /dev/null; then
+		echo "fork が起動しなかったので純正で起動する"
+		/mnt/app/app/HDZGOGGLE &
+	  fi
+	  sleep 22
+	  PID=$(app_pid)
+	  echo "app pid: ${PID:-not found}"
+	  [ -n "$PID" ] && echo "mapped: $(grep -o '[^ ]*libmpp_vo[^ ]*' "/proc/$PID/maps" 2>/dev/null | head -1)"
+	  sync ) >> "$REPORT" 2>&1 &
+	return 0
+}
+
 start_app() {
+	if [ "$FAST_LAUNCH" = 1 ] && fast_launch; then
+		return 0
+	fi
 	if [ -e /mnt/extsd/develop.sh ]; then
 		/mnt/extsd/develop.sh
 	else
@@ -192,6 +320,19 @@ fi
 if [ "$APP_BEFORE_I2C" = 1 ]; then
 	wait_dispw
 	record_env
+	if [ "$LIBCOPY" = 1 ]; then
+		i=0
+		while [ ! -e /tmp/lib.done ] && [ $i -lt 60 ]; do usleep 50000; i=$((i + 1)); done
+		if [ -e /tmp/lib.done ]; then
+			export LD_LIBRARY_PATH="/tmp/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+			t "libs from /tmp/lib (waited $((i * 50))ms)"
+		else
+			t "libcopy not done, libs from NOR"
+		fi
+	fi
+	[ "$DEFER_PORT1" = 1 ] && export HDZ_DEFER_PORT1=1
+	[ "$OSD_BEFORE_TUNER" = 1 ] && export HDZ_OSD_BEFORE_TUNER=1
+	[ "$EFUSE_CACHE" = 1 ] && export HDZ_EFUSE_CACHE=1
 	for p in $APP_I2C_GATED_PORTS; do
 		export HDZ_I2C${p}_NOT_BEFORE=$I2C_NOT_BEFORE
 	done
@@ -267,7 +408,15 @@ fi
 
 # 後回しにした SD 状態ログの写しを、アプリが立ち上がってから裏で走らせる。
 if [ "$LATE_SDSTAT" = 1 ]; then
-	( sleep 10; /mnt/app/script/sdstat_log_backup.sh > /dev/null 2>&1; t "late sdstat done"; sync ) &
+	# ついでに dmesg をカードに控える (リングバッファは約 16KB で、16 秒ごろの
+	# IT66121 の NACK 連打に押し出される前に取る)。画面切り替えの [VDPO] の
+	# disable から enable までの間隔 (disp.ko の差し替えの確認) を見る。
+	( sleep 10; /mnt/app/script/sdstat_log_backup.sh > /dev/null 2>&1; t "late sdstat done"; dmesg > /mnt/extsd/dmesg-late.txt 2>/dev/null
+	  # アプリのログは次の起動で上書きされるので、ここまでの分を写しておく
+	  # (映像が出るまでの時刻はこの中)。
+	  cp /mnt/extsd/HDZGOGGLE.log "/mnt/extsd/boot-logs/boot$BOOTN-stage$STAGE.log" 2>/dev/null
+	  cp /mnt/extsd/dmesg-late.txt "/mnt/extsd/boot-logs/boot$BOOTN-stage$STAGE.dmesg" 2>/dev/null
+	  sync; t "records written (boot $BOOTN)"; sync; beep_short 1 ) &
 fi
 
 exit 0

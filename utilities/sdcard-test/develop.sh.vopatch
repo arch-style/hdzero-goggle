@@ -128,7 +128,15 @@ verify_later() {
 # RAM (/tmp は tmpfs) にコピーしてそこから実行する。コピーに失敗したら従来どおり。
 if [ -e /mnt/extsd/HDZGOGGLE ]; then
 	APP=/mnt/extsd/HDZGOGGLE
-	if cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE 2>/dev/null && chmod +x /tmp/HDZGOGGLE; then
+	# init-exp.sh (起動時間の実験、段階 13 以降) が S10udev の時点で写して
+	# あれば、それを使う (大きさが合うときだけ)。無ければここで写す。
+	SZ=$(ls -l /mnt/extsd/HDZGOGGLE | awk '{print $5}')
+	if [ -s /tmp/HDZGOGGLE.staged.done ] && [ "$(cat /tmp/HDZGOGGLE.staged.done)" = "$SZ" ] \
+	   && [ "$(ls -l /tmp/HDZGOGGLE.staged | awk '{print $5}')" = "$SZ" ] \
+	   && mv /tmp/HDZGOGGLE.staged /tmp/HDZGOGGLE 2>/dev/null; then
+		APP=/tmp/HDZGOGGLE
+		echo "app staged by init-exp" >> "$REPORT"
+	elif cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE 2>/dev/null && chmod +x /tmp/HDZGOGGLE; then
 		APP=/tmp/HDZGOGGLE
 	fi
 else
@@ -179,9 +187,10 @@ elif patch_vo; then
 else
 	echo "パッチなしで起動" >> "$REPORT"
 fi
-sync
 
+# 起動してから sync する (sync が先だと、その分だけアプリが遅れる)。
 "$APP" &
+sync
 if [ "$APP" != /mnt/app/app/HDZGOGGLE ]; then
 	fallback_if_dead &
 fi
