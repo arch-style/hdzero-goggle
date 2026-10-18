@@ -1,0 +1,28 @@
+--- boot 86 stage 110 fill-probe start 13.21 cur=1104000 min=1104000
+df: /dev/mmcblk0p1        30529344  11373952  19155392  37% /mnt/extsd
+probe sdstat dir=/mnt/extsd/log files=84 ms=60 create_ms=0 max_index=83
+probe ls dir=/mnt/extsd/DCIM/100HDZRO files=116 ms=120
+probe ls dir=/mnt/extsd/boot-logs files=327 ms=380
+probe root dir=/mnt/extsd files=130 ms=0
+probe sdstat dir=/mnt/extsd/filltest/log-0100 files=100 ms=80 create_ms=0 max_index=99
+probe sdstat dir=/mnt/extsd/filltest/log-0300 files=300 ms=370 create_ms=10 max_index=299
+probe sdstat dir=/mnt/extsd/filltest/log-1000 files=1000 ms=2780 create_ms=10 max_index=999
+probe sdstat dir=/mnt/extsd/filltest/log-3000 files=3000 ms=26790 create_ms=20 max_index=2999
+probe ls dir=/mnt/extsd/filltest/dcim-0100 files=100 ms=120
+probe ls dir=/mnt/extsd/filltest/dcim-0300 files=300 ms=290
+probe ls dir=/mnt/extsd/filltest/dcim-1000 files=1000 ms=2170
+probe ls dir=/mnt/extsd/filltest/dcim-3000 files=3000 ms=13490
+probe fsck dev=/dev/mmcblk0p1 ms=4000 rc=1 lines=10
+fsck: fsck.fat 4.2 (2021-01-31)
+fsck: There are differences between boot sector and its backup.
+fsck: This is mostly harmless. Differences: (offset:original/backup)
+fsck:   65:01/00
+fsck:   Not automatically fixing this.
+fsck: Dirty bit is set. Fs was not properly unmounted and some data may be corrupt.
+fsck:  Automatically removing dirty bit.
+fsck: 
+fsck: Leaving filesystem unchanged.
+fsck: /dev/mmcblk0p1: 9658 files, 177718/477021 clusters
+fsck-tail: Leaving filesystem unchanged.
+fsck-tail: /dev/mmcblk0p1: 9658 files, 177718/477021 clusters
+fill-probe end 66.60 cur=1104000 total_ms=53390

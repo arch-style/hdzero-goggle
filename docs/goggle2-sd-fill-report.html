@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SD カードを使うと起動が遅くなる? — Goggle 2 の計測レポート</title>
+<style>
+/* 色の役割は 1 か所で決める。ライトとダークは同じ色相の別の段。 */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --ring: rgba(11,11,11,0.10);
+  --s1: #2a78d6;  /* 純正 / sdstat */
+  --s2: #eb6834;  /* fork / ls */
+  --s3: #1baf7a;  /* fsck */
+  --s1-wash: rgba(42,120,214,0.10);
+  --s2-wash: rgba(235,104,52,0.10);
+  --warn: #fab219;
+  --crit: #d03b3b;
+  --good: #0ca30c;
+  --good-text: #006300;
+  --paper: #ffffff;
+  --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --s1-wash: rgba(57,135,229,0.14); --s2-wash: rgba(217,89,38,0.14);
+    --good-text: #0ca30c; --paper: #232322;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --s1-wash: rgba(57,135,229,0.14); --s2-wash: rgba(217,89,38,0.14);
+  --good-text: #0ca30c; --paper: #232322;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--font); font-size: 15.5px; line-height: 1.8; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 36px 20px 80px; display: grid; gap: 56px; }
+h1, h2, h3 { line-height: 1.4; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(26px, 4.4vw, 36px); }
+h2 { font-size: 23px; display: flex; gap: 12px; align-items: baseline; }
+h2 .no { font-family: var(--mono); font-size: 13px; color: var(--muted); font-weight: 500; }
+h3 { font-size: 17px; }
+p { margin: 0; max-width: 70ch; }
+section { display: grid; gap: 18px; }
+.lede { color: var(--ink-2); font-size: 16.5px; }
+.meta { font-family: var(--mono); font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+code { font-family: var(--mono); font-size: .88em; background: var(--surface); border: 1px solid var(--grid); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 20px 22px; min-width: 0; }
+.figure { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 18px; min-width: 0; position: relative; }
+.figure svg { display: block; width: 100%; height: auto; overflow: visible; }
+.figcap { font-size: 13px; color: var(--ink-2); margin-top: 10px; max-width: none; }
+.est { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 99px; border: 1px solid var(--axis); color: var(--ink-2); margin-left: 4px; white-space: nowrap; vertical-align: 1px; }
+.meas { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 99px; background: var(--s1-wash); color: var(--ink); margin-left: 4px; white-space: nowrap; vertical-align: 1px; }
+
+/* 結論 */
+.hero { display: grid; gap: 14px; }
+.hero .big { font-size: clamp(28px, 5vw, 44px); font-weight: 700; line-height: 1.3; }
+.hero .big em { font-style: normal; background: linear-gradient(transparent 62%, var(--s1-wash) 62%); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 16px 18px; display: grid; gap: 4px; align-content: start; }
+.tile .label { font-size: 13px; color: var(--ink-2); }
+.tile .value { font-size: 30px; font-weight: 700; line-height: 1.25; }
+.tile .value small { font-size: 15px; font-weight: 500; color: var(--ink-2); }
+.tile .sub { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.tile .icon { font-size: 13px; font-weight: 700; display: inline-flex; gap: 6px; align-items: center; }
+.tile .icon i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+/* 表 */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.hi td { background: var(--s1-wash); }
+
+/* 比較 */
+.vs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.vs .card h3 { display: flex; gap: 8px; align-items: center; }
+.vs .card h3 i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.vs ul { margin: 6px 0 0; padding-left: 1.2em; }
+.vs li { margin: 4px 0; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.legend i.dot { width: 9px; height: 9px; border-radius: 50%; }
+.legend i.box { width: 12px; height: 12px; border-radius: 3px; }
+
+/* ツールチップ */
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--page); font-size: 12.5px; line-height: 1.55; padding: 6px 10px; border-radius: 6px; white-space: nowrap; opacity: 0; transform: translate(-50%, calc(-100% - 12px)); transition: opacity .1s; z-index: 5; }
+.tip.on { opacity: 1; }
+
+/* SVG の文字 */
+.t { fill: var(--ink); font-family: var(--font); }
+.t2 { fill: var(--ink-2); font-family: var(--font); }
+.tm { fill: var(--muted); font-family: var(--font); }
+.mono { font-family: var(--mono); }
+
+ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.fix { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.fix .card { display: grid; gap: 6px; align-content: start; }
+.fix .card b { font-size: 15.5px; }
+.fix .gain { font-size: 13px; color: var(--good-text); font-weight: 600; }
+details summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.src { font-size: 13px; color: var(--ink-2); }
+.src li { margin: 3px 0; }
+@media (max-width: 640px) { body { font-size: 15px; } .card, .figure { padding: 14px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="meta"><span>HDZero Goggle 2</span><span>2026-10-18</span><span>カード HDZERO_BOOT (32 GB / FAT32 / 64 KB クラスタ)</span><span>段階 107–112、各条件 2 回</span></div>
+  <h1>SD カードを使うと、起動は遅くなるのか</h1>
+  <p class="big">遅くなる原因は<em>使った容量</em>ではなく、<em>ファイルの本数</em>でした。</p>
+  <p class="lede">純正のファームは、起動のたびに SD カードの <code>log</code> フォルダへファイルを 1 本足し、一度も消しません。そのフォルダを毎回頭から調べるので、本数が増えるほど、映像が出るまでの時間がおよそ「本数の 2 乗」で延びます。15 GB 書き足して容量だけ増やしても、カードのマウントの時間は変わりませんでした。</p>
+  <div class="tiles">
+    <div class="tile">
+      <span class="label">純正の SD ログの写し (log 3000 本)</span>
+      <span class="value">24–27<small> 秒</small></span>
+      <span class="sub">1000 本なら 2.6–2.8 秒、100 本なら 0.07–0.08 秒。純正はこれが終わるまでアプリを起動しない。</span>
+    </div>
+    <div class="tile">
+      <span class="label">容量を 15 GB 増やしたときのマウント</span>
+      <span class="value">±0<small> 秒</small></span>
+      <span class="sub">FAT の読み込み 112–119 ms → 115–117 ms。使用量 35% → 87%。</span>
+    </div>
+    <div class="tile">
+      <span class="label">起動後の点検 (fsck、830 → 9650 本)</span>
+      <span class="value">1.3 → 3.8<small> 秒</small></span>
+      <span class="sub">本数にほぼ比例。容量 +15 GB では +0.35 秒ほど。映像は待たせないが、録画と Wi-Fi が待つ。</span>
+    </div>
+    <div class="tile">
+      <span class="label">このカードの fork 構成</span>
+      <span class="value">0<small> 秒</small></span>
+      <span class="sub">SD ログの写しを映像の後に回し、点検も走らないので、映像までには効かない。</span>
+    </div>
+  </div>
+</header>
+
+<!-- 1. 仕組み -->
+<section id="why">
+  <h2><span class="no">01</span>なぜ「本数の 2 乗」で遅くなるのか</h2>
+  <p>SD カードの FAT という形式では、フォルダの中身は「名簿」のように上から順に並んでいるだけで、目次がありません。あるファイルを確かめるには、名簿を先頭から探します。純正の SD ログの写しは、<code>log</code> の全ファイルを 1 本ずつ確かめて次の番号を決めるので、「1 本確かめるたびに名簿を頭から読む」を本数の回数だけ繰り返します。</p>
+  <div class="figure">
+    <svg viewBox="0 0 900 330" role="img" aria-label="名簿の絵。100 本なら約 5 千回、3000 本なら約 450 万回、名前を読み比べる">
+      <!-- 名簿 1: 100 本 -->
+      <g transform="translate(30,20)">
+        <rect x="0" y="14" width="250" height="270" rx="12" fill="var(--paper)" stroke="var(--axis)"/>
+        <rect x="88" y="0" width="74" height="28" rx="7" fill="var(--axis)"/>
+        <rect x="104" y="7" width="42" height="12" rx="4" fill="var(--surface)"/>
+        <text x="125" y="58" text-anchor="middle" class="t" font-size="15" font-weight="700">log フォルダ (100 本)</text>
+        <g class="mono" font-size="12">
+          <text x="24" y="90" class="t2">2026-09-08.log.0</text>
+          <text x="24" y="114" class="t2">2026-09-08.log.1</text>
+          <text x="24" y="138" class="t2">2026-09-08.log.2</text>
+          <text x="24" y="162" class="t2">2026-09-08.log.3</text>
+          <text x="24" y="186" class="tm">⋮</text>
+          <text x="24" y="210" class="t2">2026-09-08.log.99</text>
+        </g>
+        <line x1="14" y1="96" x2="236" y2="96" stroke="var(--grid)"/>
+        <line x1="14" y1="120" x2="236" y2="120" stroke="var(--grid)"/>
+        <line x1="14" y1="144" x2="236" y2="144" stroke="var(--grid)"/>
+        <line x1="14" y1="168" x2="236" y2="168" stroke="var(--grid)"/>
+        <!-- 指が上からなぞる -->
+        <path d="M 226 84 L 226 160" stroke="var(--s1)" stroke-width="3" stroke-linecap="round" marker-end="url(#arr)"/>
+        <text x="125" y="248" text-anchor="middle" class="t" font-size="14">読み比べ 約 <tspan font-weight="700">5 千回</tspan></text>
+        <text x="125" y="268" text-anchor="middle" class="tm" font-size="12">実測 0.07–0.08 秒</text>
+      </g>
+      <!-- 矢印 -->
+      <g transform="translate(300,140)">
+        <text x="40" y="-14" text-anchor="middle" class="t2" font-size="13">本数 ×30</text>
+        <path d="M 0 0 L 70 0" stroke="var(--muted)" stroke-width="2" marker-end="url(#arrm)"/>
+        <text x="40" y="24" text-anchor="middle" class="t2" font-size="13">時間 ×300</text>
+      </g>
+      <!-- 名簿 2: 3000 本 (束) -->
+      <g transform="translate(400,20)">
+        <rect x="16" y="26" width="250" height="270" rx="12" fill="var(--paper)" stroke="var(--axis)" opacity=".55"/>
+        <rect x="8" y="20" width="250" height="270" rx="12" fill="var(--paper)" stroke="var(--axis)" opacity=".8"/>
+        <rect x="0" y="14" width="250" height="270" rx="12" fill="var(--paper)" stroke="var(--axis)"/>
+        <rect x="88" y="0" width="74" height="28" rx="7" fill="var(--axis)"/>
+        <rect x="104" y="7" width="42" height="12" rx="4" fill="var(--surface)"/>
+        <text x="125" y="58" text-anchor="middle" class="t" font-size="15" font-weight="700">log フォルダ (3000 本)</text>
+        <g class="mono" font-size="12">
+          <text x="24" y="90" class="t2">2026-09-08.log.0</text>
+          <text x="24" y="114" class="t2">2026-09-08.log.1</text>
+          <text x="24" y="138" class="tm">⋮</text>
+          <text x="24" y="162" class="t2">2026-09-08.log.1500</text>
+          <text x="24" y="186" class="tm">⋮</text>
+          <text x="24" y="210" class="t2">2026-09-08.log.2999</text>
+        </g>
+        <path d="M 226 84 L 226 206" stroke="var(--crit)" stroke-width="3" stroke-linecap="round" marker-end="url(#arrc)"/>
+        <path d="M 212 84 L 212 170" stroke="var(--crit)" stroke-width="2" stroke-linecap="round" opacity=".55"/>
+        <path d="M 200 84 L 200 130" stroke="var(--crit)" stroke-width="2" stroke-linecap="round" opacity=".35"/>
+        <text x="125" y="248" text-anchor="middle" class="t" font-size="14">読み比べ 約 <tspan font-weight="700">450 万回</tspan></text>
+        <text x="125" y="268" text-anchor="middle" class="tm" font-size="12">実測 24–27 秒</text>
+      </g>
+      <!-- ゴーグルの絵: 待っている -->
+      <g transform="translate(700,70)">
+        <rect x="0" y="40" width="170" height="78" rx="34" fill="var(--ink-2)"/>
+        <rect x="18" y="56" width="58" height="46" rx="18" fill="var(--surface)"/>
+        <rect x="94" y="56" width="58" height="46" rx="18" fill="var(--surface)"/>
+        <rect x="74" y="74" width="22" height="14" rx="5" fill="var(--ink-2)"/>
+        <path d="M 4 70 Q -22 76 -18 112" stroke="var(--ink-2)" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path d="M 166 70 Q 192 76 188 112" stroke="var(--ink-2)" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <!-- 砂時計 -->
+        <g transform="translate(36,64)">
+          <path d="M 0 0 h 22 l -11 15 l 11 15 h -22 l 11 -15 z" fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M 5 26 h 12 l -6 -6 z" fill="var(--warn)"/>
+        </g>
+        <g transform="translate(112,64)">
+          <path d="M 0 0 h 22 l -11 15 l 11 15 h -22 l 11 -15 z" fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M 5 26 h 12 l -6 -6 z" fill="var(--warn)"/>
+        </g>
+        <text x="85" y="160" text-anchor="middle" class="t" font-size="14" font-weight="700">純正: その間は映像が出ない</text>
+        <text x="85" y="182" text-anchor="middle" class="tm" font-size="12">アプリの起動前に待つ</text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--s1)"/></marker>
+        <marker id="arrc" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker>
+        <marker id="arrm" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+      </defs>
+    </svg>
+    <p class="figcap">「読み比べ」の回数は、1 本確かめるたびに平均して名簿の半分を読むとした概算です<span class="est">推定</span>。時間は実測で、本数が 3 倍 (1000 → 3000 本) になると時間は約 9 倍になりました。2 乗の延び方と合います。</p>
+  </div>
+
+  <div class="figure">
+    <svg viewBox="0 0 900 236" role="img" aria-label="SD カードのフォルダごとの増え方">
+      <!-- SD カードの絵 -->
+      <g transform="translate(24,18)">
+        <path d="M 0 14 L 14 0 H 150 Q 160 0 160 10 V 200 Q 160 210 150 210 H 10 Q 0 210 0 200 Z" fill="var(--ink-2)"/>
+        <g fill="var(--warn)">
+          <rect x="30" y="8" width="12" height="30" rx="2"/><rect x="50" y="8" width="12" height="30" rx="2"/>
+          <rect x="70" y="8" width="12" height="30" rx="2"/><rect x="90" y="8" width="12" height="30" rx="2"/>
+          <rect x="110" y="8" width="12" height="30" rx="2"/><rect x="130" y="8" width="12" height="30" rx="2"/>
+        </g>
+        <rect x="16" y="64" width="128" height="92" rx="6" fill="var(--surface)"/>
+        <text x="80" y="98" text-anchor="middle" class="t" font-size="14" font-weight="700">SD</text>
+        <text x="80" y="122" text-anchor="middle" class="t2" font-size="11.5">FAT32</text>
+        <text x="80" y="140" text-anchor="middle" class="t2" font-size="11.5">32 GB</text>
+      </g>
+      <!-- フォルダ 3 つ -->
+      <g font-size="13.5">
+        <g transform="translate(240,24)">
+          <path d="M 0 10 Q 0 0 10 0 H 50 L 62 12 H 170 Q 180 12 180 22 V 70 Q 180 80 170 80 H 10 Q 0 80 0 70 Z" fill="var(--s1-wash)" stroke="var(--s1)" stroke-width="1.5"/>
+          <text x="16" y="44" class="t" font-weight="700">log/</text>
+          <text x="16" y="66" class="t2" font-size="12.5">SD ログの写し</text>
+          <text x="200" y="36" class="t">起動のたびに +1 本、<tspan font-weight="700">消えない</tspan></text>
+          <text x="200" y="58" class="t2" font-size="12.5">このカード: 6 回の起動で 80 → 86 本 (実測)。純正はアプリの起動前に全部調べる</text>
+        </g>
+        <g transform="translate(240,112)">
+          <path d="M 0 10 Q 0 0 10 0 H 50 L 62 12 H 170 Q 180 12 180 22 V 70 Q 180 80 170 80 H 10 Q 0 80 0 70 Z" fill="var(--s2-wash)" stroke="var(--s2)" stroke-width="1.5"/>
+          <text x="16" y="44" class="t" font-weight="700">DCIM/100HDZRO/</text>
+          <text x="16" y="66" class="t2" font-size="12.5">録画</text>
+          <text x="200" y="36" class="t">録画のたびに +2 本 (動画とサムネイル)</text>
+          <text x="200" y="58" class="t2" font-size="12.5">録画プロセスが次の番号を決めるとき全部調べる (映像とは別に裏で)</text>
+        </g>
+      </g>
+    </svg>
+    <p class="figcap">カードのいちばん上のフォルダ (131 本) は、マウントのときから先頭がメモリに置かれたままで、調べても 0 ms でした。</p>
+  </div>
+</section>
+
+<!-- 2. どの項目でどの程度 -->
+<section id="how-much">
+  <h2><span class="no">02</span>どの処理で、どのくらい遅くなるか</h2>
+  <p>本物のフォルダとは別の場所に 100、300、1000、3000 本のダミーのフォルダを作り、それぞれを調べる時間を測りました。毎回、直前にゴーグルのキャッシュを捨てて、起動直後と同じ「まだ読んでいない」状態から測っています。</p>
+
+  <div class="figure" id="fig-scan">
+    <div class="legend">
+      <span><i style="background:var(--s1)"></i>SD ログの写しの番号探し (純正の <code>sdstat_log_backup.sh</code> と同じループ)</span>
+      <span><i style="background:var(--s2)"></i>ファイルごとの情報を読む (<code>ls -l</code>、録画の数え上げに近い)</span>
+    </div>
+    <svg id="scan" viewBox="0 0 900 380" role="img" aria-label="本数と時間のグラフ。3000 本で番号探しは 24 から 27 秒、ls は 12 から 13 秒"></svg>
+    <div class="tip" id="tip-scan"></div>
+    <p class="figcap">点は各起動の実測 (2 回)、線はその平均を結んだもの。CPU は 1104 MHz に固定。純正の起動は 816 MHz から始まるので、実際はもう少し遅いはずです<span class="est">推定</span>。</p>
+  </div>
+
+  <div class="tablewrap card">
+    <table>
+      <thead><tr><th>本数</th><th class="num">SD ログの番号探し (1 回目 / 2 回目)</th><th class="num">ls -l (1 回目 / 2 回目)</th><th class="num">ファイル 1 本の作成</th></tr></thead>
+      <tbody>
+        <tr><td>100</td><td class="num">0.07 / 0.08 秒</td><td class="num">0.12 / 0.12 秒</td><td class="num">0 / 0 ms</td></tr>
+        <tr><td>300</td><td class="num">0.25 / 0.37 秒</td><td class="num">0.26 / 0.29 秒</td><td class="num">0 / 10 ms</td></tr>
+        <tr><td>1000</td><td class="num">2.62 / 2.78 秒</td><td class="num">1.29 / 2.17 秒</td><td class="num">0 / 10 ms</td></tr>
+        <tr class="hi"><td>3000</td><td class="num"><b>23.91 / 26.79 秒</b></td><td class="num">12.43 / 13.49 秒</td><td class="num">30 / 20 ms</td></tr>
+        <tr><td>このカードの log/ (81–86 本)</td><td class="num">0.03–0.06 秒</td><td class="num">—</td><td class="num">0–10 ms</td></tr>
+        <tr><td>このカードの DCIM (116 本)</td><td class="num">—</td><td class="num">0.12–0.15 秒</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="vs">
+    <div class="figure" id="fig-fsck">
+      <h3>起動後の点検 (fsck) の時間</h3>
+      <svg id="fsck" viewBox="0 0 440 230" role="img" aria-label="点検の時間。830 本で 1.3 秒台、9650 本で 3.6 から 4.0 秒、容量 87% で 1.7 秒"></svg>
+      <div class="tip" id="tip-fsck"></div>
+      <p class="figcap">純正アプリが起動のたびに行う点検の代わりに <code>fsck.fat -n</code> (読むだけ) を測りました。本物は、これに sleep 3 秒とカードの外し付けが足されます<span class="est">推定</span>。</p>
+    </div>
+    <div class="figure" id="fig-mount">
+      <h3>マウントで FAT を読む時間</h3>
+      <svg id="mount" viewBox="0 0 440 230" role="img" aria-label="マウントの時間。容量を 15 GB 増やしても 115 ms 前後で変わらない"></svg>
+      <div class="tip" id="tip-mount"></div>
+      <p class="figcap">起動ごとの dmesg から。段階 107 の 232 ms だけ外れていて、理由は分かっていません (CPU は同じ、エラーなし)。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>マウントの時間を決めるのはカードの作り方</h3>
+    <p style="margin-top:6px">ゴーグルの SD ドライバは、マウントのたびに FAT (カード全体の地図) を丸ごと読みます。その大きさは容量とクラスタサイズで決まり、使用量では変わりません。以前の別のカードでは、同じ処理に 0.6〜1.1 秒かかっていました。</p>
+    <div class="tablewrap" style="margin-top:10px">
+      <table>
+        <thead><tr><th>カード</th><th class="num">FAT の大きさ</th><th class="num">マウントで FAT を読む時間</th></tr></thead>
+        <tbody>
+          <tr><td>2026-10-12 のカード (約 62 GB、16 KB クラスタ)</td><td class="num">15.6 MB</td><td class="num">1.13 秒</td></tr>
+          <tr><td>NO NAME2 (64 GB、32 KB クラスタ)</td><td class="num">7.8 MB</td><td class="num">0.59–0.62 秒</td></tr>
+          <tr class="hi"><td>HDZERO_BOOT (32 GB、64 KB クラスタ)</td><td class="num">1.9 MB</td><td class="num">0.11–0.12 秒</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 3. 純正と fork -->
+<section id="vs">
+  <h2><span class="no">03</span>純正ファームと fork の違い</h2>
+  <p>ここでの「fork」は、このリポジトリのアプリを、カードの実験用スクリプト (<code>rc-exp.sh</code>、<code>init-exp.sh</code>) で起動する今の構成のことです。同じ fork のアプリでも、純正の起動スクリプトで起動すれば、純正と同じく SD ログの写しを待ちます。</p>
+
+  <div class="figure">
+    <div class="legend">
+      <span><i class="box" style="background:var(--axis)"></i>カードに関係しない処理</span>
+      <span><i class="box" style="background:var(--s1)"></i>使うほど延びる処理</span>
+      <span><i class="box" style="background:var(--s3)"></i>映像</span>
+    </div>
+    <svg viewBox="0 0 900 330" role="img" aria-label="純正と fork の起動の流れ。純正は SD ログの写しが映像の前、fork は映像の後">
+      <defs>
+        <pattern id="grow" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="8" height="8" fill="var(--s1)"/>
+          <line x1="0" y1="0" x2="0" y2="8" stroke="var(--surface)" stroke-width="2" opacity=".45"/>
+        </pattern>
+      </defs>
+      <!-- 純正 -->
+      <text x="0" y="24" class="t" font-size="15" font-weight="700">純正 9.5.1</text>
+      <text x="0" y="44" class="tm" font-size="12">映像まで約 22 秒 (起動高速化ノートより)</text>
+      <g transform="translate(0,58)" font-size="12.5">
+        <rect x="0" y="0" width="150" height="40" rx="6" fill="var(--axis)"/><text x="75" y="25" text-anchor="middle" class="t">電源・OS</text>
+        <rect x="154" y="0" width="80" height="40" rx="6" fill="var(--axis)"/><text x="194" y="25" text-anchor="middle" class="t">マウント</text>
+        <rect x="238" y="0" width="150" height="40" rx="6" fill="var(--axis)"/><text x="313" y="25" text-anchor="middle" class="t">初期化の待ち</text>
+        <rect x="392" y="0" width="150" height="40" rx="6" fill="url(#grow)"/><text x="467" y="25" text-anchor="middle" fill="#fff" font-weight="700">SD ログの写し</text>
+        <path d="M 546 20 h 34" stroke="var(--crit)" stroke-width="2" stroke-dasharray="0" marker-end="url(#arrc2)"/>
+        <rect x="584" y="0" width="90" height="40" rx="6" fill="var(--axis)"/><text x="629" y="25" text-anchor="middle" class="t">アプリ</text>
+        <rect x="678" y="0" width="56" height="40" rx="6" fill="var(--s3)"/><text x="706" y="25" text-anchor="middle" fill="#fff" font-weight="700">映像</text>
+        <rect x="738" y="0" width="150" height="40" rx="6" fill="url(#grow)"/><text x="813" y="25" text-anchor="middle" fill="#fff" font-weight="700">点検 (fsck)</text>
+        <text x="467" y="62" text-anchor="middle" class="t2">log の本数の 2 乗で延びる</text>
+        <text x="467" y="80" text-anchor="middle" class="t2">→ 映像がそのぶん遅れる</text>
+        <text x="813" y="62" text-anchor="middle" class="t2">本数に比例 + 3 秒</text>
+        <text x="813" y="80" text-anchor="middle" class="t2">→ 録画と Wi-Fi が待つ</text>
+      </g>
+      <!-- fork -->
+      <text x="0" y="200" class="t" font-size="15" font-weight="700">fork (このカードの構成)</text>
+      <text x="0" y="220" class="tm" font-size="12">映像まで 6.09–6.27 秒 (起動高速化ノートより)</text>
+      <g transform="translate(0,234)" font-size="12.5">
+        <rect x="0" y="0" width="150" height="40" rx="6" fill="var(--axis)"/><text x="75" y="25" text-anchor="middle" class="t">電源・OS</text>
+        <rect x="154" y="0" width="40" height="40" rx="6" fill="var(--axis)"/><text x="174" y="25" text-anchor="middle" class="t" font-size="11">マ</text>
+        <rect x="198" y="0" width="90" height="40" rx="6" fill="var(--axis)"/><text x="243" y="25" text-anchor="middle" class="t">アプリ</text>
+        <rect x="292" y="0" width="56" height="40" rx="6" fill="var(--s3)"/><text x="320" y="25" text-anchor="middle" fill="#fff" font-weight="700">映像</text>
+        <rect x="430" y="0" width="150" height="40" rx="6" fill="url(#grow)" opacity=".85"/><text x="505" y="25" text-anchor="middle" fill="#fff" font-weight="700">SD ログの写し</text>
+        <text x="505" y="62" text-anchor="middle" class="t2">映像の後に裏で (待たない)</text>
+        <rect x="620" y="0" width="150" height="40" rx="6" fill="none" stroke="var(--axis)" stroke-dasharray="5 4"/><text x="695" y="25" text-anchor="middle" class="tm">点検は走らない</text>
+        <text x="695" y="62" text-anchor="middle" class="t2">カードに develop.sh があるため</text>
+      </g>
+      <defs><marker id="arrc2" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker></defs>
+    </svg>
+    <p class="figcap">流れを示す模式図で、箱の長さは時間に比例していません。「マ」はマウント (fork のカードは FAT が小さく 0.11–0.12 秒)。</p>
+  </div>
+
+  <div class="tablewrap card">
+    <table>
+      <thead><tr><th>処理</th><th>純正 9.5.1</th><th>fork (このカードの構成)</th></tr></thead>
+      <tbody>
+        <tr><td><b>SD ログの写し</b><br><span class="tm" style="font-size:12.5px">log の本数の 2 乗で延びる</span></td>
+            <td><b>映像の前</b>。<code>rc.sh</code> 86 行目で終わるまで待ってからアプリを起動する</td>
+            <td>映像の後に裏で (<code>rc-exp.sh</code> の <code>LATE_SDSTAT=1</code>)。映像は待たない</td></tr>
+        <tr><td><b>起動後の点検 (fsck)</b><br><span class="tm" style="font-size:12.5px">本数に比例 + sleep 3 秒</span></td>
+            <td>カードが挿さっていれば起動ごと。映像は先に出るが、終わるまで録画と Wi-Fi の起動処理が待つ</td>
+            <td>走らない。カードに <code>develop.sh</code> と <code>HDZGOGGLE</code> があると止まる作りで、fork のアプリにも同じ点検は入っている</td></tr>
+        <tr><td><b>録画の数え上げ</b><br><span class="tm" style="font-size:12.5px">DCIM の本数の 2 乗に近い</span></td>
+            <td colspan="2">同じ (どちらも純正の録画プロセス)。映像とは別に裏で動き、終わるまで録画の番号が決まらない<span class="est">推定</span></td></tr>
+        <tr><td><b>マウント</b><br><span class="tm" style="font-size:12.5px">容量とクラスタで決まる</span></td>
+            <td colspan="2">同じ (OS の処理)。使用量では変わらない (実測)。カードを 64 KB クラスタで作ると短い</td></tr>
+        <tr><td><b>boot-logs/</b><br><span class="tm" style="font-size:12.5px">fork の実験だけ</span></td>
+            <td>無い</td>
+            <td>実験の記録が起動ごとに 5 本増える (今 337 本)。ログ記録が有効なときのアプリの整理は未測定<span class="est">未確認</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="figure" id="fig-proj">
+    <h3>使い続けると、純正の映像はどれだけ遅れるか <span class="est">推定</span></h3>
+    <div class="legend" style="margin-top:6px">
+      <span><i style="background:var(--s1)"></i>純正 (SD ログの写しで映像が遅れる分)</span>
+      <span><i style="background:var(--s2)"></i>fork (このカードの構成)</span>
+    </div>
+    <svg id="proj" viewBox="0 0 900 330" role="img" aria-label="起動回数と遅れの推定。1000 回で約 2.8 秒、2000 回で約 11 秒、3000 回で約 25 秒"></svg>
+    <div class="tip" id="tip-proj"></div>
+    <p class="figcap">起動 1 回で log が 1 本増える (このカードの実測: 6 回で 6 本) として、実測の 1000 本と 3000 本に合わせた「約 2.8 マイクロ秒 × 本数²」で描いた推定です。毎日 1 回起動すると 1 年で約 0.4 秒、3 年で約 3.4 秒。ログを消せば 0 に戻ります。</p>
+  </div>
+</section>
+
+<!-- 4. 対策 -->
+<section id="fix">
+  <h2><span class="no">04</span>使う人ができること</h2>
+  <div class="fix">
+    <div class="card"><b>カードの log フォルダを消す</b><span>中身はゴーグル内部の記録の写しで、消しても動作には関係しません<span class="est">推定</span>。</span><span class="gain">純正: 映像の前の待ちが 0 に戻る</span></div>
+    <div class="card"><b>要らない録画を消す</b><span>DCIM の本数が減ると、録画の数え上げと起動後の点検が短くなります。</span><span class="gain">録画できるまでが早くなる</span></div>
+    <div class="card"><b>64 KB クラスタでフォーマット</b><span>FAT が小さくなり、マウントが短くなります。容量の大きいカードほど効きます。</span><span class="gain">0.62 秒 → 0.12 秒 (実測)</span></div>
+    <div class="card"><b>容量は気にしなくてよい</b><span>15 GB 書き足して 87% まで埋めても、マウントは変わらず、点検も +0.35 秒ほどでした。</span><span class="gain">遅さの原因はファイルの本数</span></div>
+  </div>
+</section>
+
+<!-- 5. 測り方 -->
+<section id="method">
+  <h2><span class="no">05</span>どうやって測ったか</h2>
+  <ol class="steps">
+    <li><b>手順 1 (段階 107、108)</b>: カードはそのまま (使用 10.3 GB、約 830 本)。</li>
+    <li><b>手順 2 (段階 109、110)</b>: <code>filltest/</code> に 100、300、1000、3000 本のフォルダを 2 組 (計 8800 本) 足す。</li>
+    <li><b>手順 3 (段階 111、112)</b>: ダミーのフォルダを消し、3 GB のファイルを 5 本 (15 GB) 足す。使用 25.3 GB (87%)。</li>
+  </ol>
+  <p>起動のたびに、記録を書き終える直前に <code>fill-probe.sh</code> が 1 回だけ動きます。計測ごとにキャッシュを捨て (<code>drop_caches</code>)、CPU を 1104 MHz に固定してから測ります。容量の GB は Mac の表示と同じく 2<sup>30</sup> バイト単位です (ゴーグルの <code>df</code> の 1 KB ブロックから計算)。カードに書くのは結果のファイルと、すぐ消す一時ファイルだけで、フラッシュには書きません。</p>
+  <details>
+    <summary>注意すること</summary>
+    <ul class="src">
+      <li>各条件 2 回ずつです。1000 本の <code>ls -l</code> は 1.29 秒と 2.17 秒で、ばらつきがあります。</li>
+      <li><code>ls -l</code> は録画プロセスの数え上げ (<code>disk_countMovies</code>: 一覧を読み、ファイルごとに stat) に近い代わりで、同じものではありません。</li>
+      <li>点検は、マウントしたまま読むだけの <code>fsck.fat -n</code> で測りました。純正の本物 (<code>chkfixsd.sh</code>) は、カードを外し、<code>fsck.fat -y</code> を走らせ、付け直します。その間に sleep が合わせて 3 秒あり、FAT の 1 つ目もカードから読み直すので、測った値より長くなるはずです。</li>
+      <li>純正の起動での遅れは、部品ごとの実測から組み立てた推定です。純正のファームで log を 1000 本にして映像の時刻を測ったわけではありません。</li>
+      <li>段階 107 のマウントだけ 232 ms でした (ほかは 112〜119 ms)。CPU のクロックは同じで、dmesg にエラーはなく、理由は分かっていません。</li>
+    </ul>
+  </details>
+  <details>
+    <summary>根拠 (コードとログ)</summary>
+    <ul class="src">
+      <li>純正の <code>rc.sh</code> 86 行目: <code>/mnt/app/script/sdstat_log_backup.sh</code> を待ってから、107 行目以降でアプリを起動 (フラッシュの控え <code>mnt_app.tar</code>)。</li>
+      <li><code>sdstat_log_backup.sh</code> 19–36 行目: <code>log/*.log.*</code> を 1 本ずつ <code>[ -f ]</code> で確かめて番号を探す。カード側を消す行は無い (66 行目は内部のログだけを消す)。</li>
+      <li>純正アプリの文字列: <code>chkfixsd.sh</code> の呼び出し、"SD Card integrity check is active"、<code>develop.sh</code> があると止める表示。fork の <code>src/ui/page_storage.c</code> 115 行目と 639–651 行目。</li>
+      <li><code>chkfixsd.sh</code>: 録画の停止、sleep 2、umount、<code>fsck.fat -y</code>、mount、sleep 1。</li>
+      <li>ベンダーの vfat ドライバ (lindenis の <code>fs/fat/inode.c</code>、dmesg の "ver1.84" と同じ版): マウントのたびに FAT 全体と、ルートの先頭 511 セクタを読んで手放さない。</li>
+      <li>録画プロセス <code>src/record/disk.c</code> 233–304 行目 (<code>disk_countMovies</code>)。</li>
+      <li>計測の記録: <code>docs/logs/2026-10-18-fill-probe/</code> (<code>fill-stage107–112.txt</code> と、マウントの時間を含む集計 <code>report-all.txt</code>)。計測の道具は <code>utilities/sdcard-test/</code> の <code>fill-probe.sh</code>、<code>fill-test.sh</code>、<code>fill-report.py</code>。</li>
+      <li>映像までの時間 (純正 約 22 秒、fork 6.09–6.27 秒): <code>docs/goggle2-boot-notes.html</code>。</li>
+    </ul>
+  </details>
+</section>
+
+</div>
+
+<script>
+// 実測値 (docs/logs/2026-10-18-fill-probe/fill-stage109.txt, 110.txt)
+const SCAN = {
+  sdstat: { name: 'SD ログの番号探し', color: 'var(--s1)', pts: [[100, [0.07, 0.08]], [300, [0.25, 0.37]], [1000, [2.62, 2.78]], [3000, [23.91, 26.79]]] },
+  ls:     { name: 'ls -l (録画の数え上げに近い)', color: 'var(--s2)', pts: [[100, [0.12, 0.12]], [300, [0.26, 0.29]], [1000, [1.29, 2.17]], [3000, [12.43, 13.49]]] },
+};
+const NS = 'http://www.w3.org/2000/svg';
+function el(name, attrs, parent, text) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function tipper(fig, tip) {
+  return {
+    show(html, x, y) {
+      const fr = fig.getBoundingClientRect();
+      tip.innerHTML = html;
+      tip.style.left = (x - fr.left) + 'px';
+      tip.style.top = (y - fr.top) + 'px';
+      tip.classList.add('on');
+    },
+    hide() { tip.classList.remove('on'); }
+  };
+}
+function fmt(v) { return v < 1 ? (v * 1000).toFixed(0) + ' ms' : v.toFixed(2) + ' 秒'; }
+
+// 図 1: 本数と時間
+(function () {
+  const svg = document.getElementById('scan');
+  const W = 900, H = 380, L = 64, R = 150, T = 16, B = 46;
+  const xmax = 3000, ymax = 28;
+  const X = v => L + (v / xmax) * (W - L - R);
+  const Y = v => T + (1 - v / ymax) * (H - T - B);
+  for (let y = 0; y <= ymax; y += 4) {
+    el('line', { x1: L, x2: W - R, y1: Y(y), y2: Y(y), stroke: y === 0 ? 'var(--axis)' : 'var(--grid)' }, svg);
+    el('text', { x: L - 10, y: Y(y) + 4, 'text-anchor': 'end', class: 'tm', 'font-size': 12 }, svg, y + ' 秒');
+  }
+  for (const x of [0, 500, 1000, 1500, 2000, 2500, 3000]) {
+    el('text', { x: X(x), y: H - B + 22, 'text-anchor': 'middle', class: 'tm', 'font-size': 12 }, svg, x.toLocaleString());
+  }
+  el('text', { x: (L + W - R) / 2, y: H - 6, 'text-anchor': 'middle', class: 't2', 'font-size': 12.5 }, svg, 'フォルダの中のファイルの本数');
+  const t = tipper(document.getElementById('fig-scan'), document.getElementById('tip-scan'));
+  for (const key of ['ls', 'sdstat']) {
+    const s = SCAN[key];
+    const avg = s.pts.map(([n, v]) => [n, (v[0] + v[1]) / 2]);
+    const d = 'M ' + X(0) + ' ' + Y(0) + ' ' + avg.map(([n, v]) => 'L ' + X(n) + ' ' + Y(v)).join(' ');
+    el('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    for (const [n, v] of s.pts) {
+      v.forEach((y, i) => {
+        const c = el('circle', { cx: X(n), cy: Y(y), r: 4.5, fill: s.color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+        const hit = el('circle', { cx: X(n), cy: Y(y), r: 13, fill: 'transparent', tabindex: 0 }, svg);
+        const html = `<b>${s.name}</b><br>${n.toLocaleString()} 本、${i + 1} 回目: ${fmt(y)}`;
+        hit.addEventListener('mouseenter', () => { const b = c.getBoundingClientRect(); t.show(html, b.left + b.width / 2, b.top); });
+        hit.addEventListener('focus', () => { const b = c.getBoundingClientRect(); t.show(html, b.left + b.width / 2, b.top); });
+        hit.addEventListener('mouseleave', t.hide); hit.addEventListener('blur', t.hide);
+      });
+    }
+    const last = avg[avg.length - 1];
+    el('text', { x: X(last[0]) + 12, y: Y(last[1]) + 4, class: 't', 'font-size': 13, 'font-weight': 700 }, svg, last[1].toFixed(1) + ' 秒');
+    el('text', { x: X(last[0]) + 12, y: Y(last[1]) + 22, class: 't2', 'font-size': 12 }, svg, key === 'sdstat' ? 'SD ログの写し' : 'ls -l');
+  }
+  // 1000 本の注記
+  el('text', { x: X(1000) - 10, y: Y(2.7) - 12, 'text-anchor': 'end', class: 't2', 'font-size': 12 }, svg, '1000 本で 2.7 秒');
+})();
+
+// 横棒グラフ (単系列)
+function hbars(id, figId, tipId, rows, opts) {
+  const svg = document.getElementById(id);
+  const W = 440, L = opts.left, R = 64, T = 8, rowH = 50;
+  const H = T + rows.length * rowH + 30;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const X = v => L + (v / opts.max) * (W - L - R);
+  for (const g of opts.ticks) {
+    el('line', { x1: X(g), x2: X(g), y1: T, y2: H - 30, stroke: g === 0 ? 'var(--axis)' : 'var(--grid)' }, svg);
+    el('text', { x: X(g), y: H - 12, 'text-anchor': 'middle', class: 'tm', 'font-size': 11.5 }, svg, opts.tick(g));
+  }
+  const t = tipper(document.getElementById(figId), document.getElementById(tipId));
+  rows.forEach((r, i) => {
+    const y = T + i * rowH;
+    el('text', { x: 0, y: y + 17, class: 't', 'font-size': 12.5 }, svg, r.label);
+    el('text', { x: 0, y: y + 34, class: 'tm', 'font-size': 11.5 }, svg, r.sub);
+    r.vals.forEach((v, j) => {
+      const by = y + 8 + j * 14, bh = 11, x0 = X(0), x1 = X(v);
+      const d = `M ${x0} ${by} H ${x1 - 4} Q ${x1} ${by} ${x1} ${by + 4} V ${by + bh - 4} Q ${x1} ${by + bh} ${x1 - 4} ${by + bh} H ${x0} Z`;
+      const bar = el('path', { d, fill: opts.color(r, j) }, svg);
+      const hit = el('rect', { x: x0, y: by - 2, width: Math.max(x1 - x0, 20), height: bh + 4, fill: 'transparent', tabindex: 0 }, svg);
+      const html = `<b>${r.label}</b><br>${j + 1} 回目: ${opts.fmt(v)}`;
+      const on = () => { const b = bar.getBoundingClientRect(); t.show(html, b.right, b.top); };
+      hit.addEventListener('mouseenter', on); hit.addEventListener('focus', on);
+      hit.addEventListener('mouseleave', t.hide); hit.addEventListener('blur', t.hide);
+      el('text', { x: x1 + 6, y: by + bh - 1, class: 't2', 'font-size': 11.5 }, svg, opts.fmt(v));
+    });
+  });
+}
+hbars('fsck', 'fig-fsck', 'tip-fsck', [
+  { label: 'そのまま', sub: '約 830 本、10.3 GB', vals: [1.42, 1.26] },
+  { label: '+8800 本', sub: '約 9650 本、10.8 GB', vals: [3.60, 4.00] },
+  { label: '+15 GB', sub: '約 865 本、25.3 GB', vals: [1.65, 1.72] },
+], { left: 128, max: 4.4, ticks: [0, 1, 2, 3, 4], tick: g => g + ' 秒', fmt: v => v.toFixed(2) + ' 秒', color: () => 'var(--s3)' });
+hbars('mount', 'fig-mount', 'tip-mount', [
+  { label: 'そのまま', sub: '10.3 GB (段階 107/108)', vals: [0.232, 0.112] },
+  { label: '+8800 本', sub: '10.8 GB (段階 109/110)', vals: [0.118, 0.119] },
+  { label: '+15 GB', sub: '25.3 GB (段階 111/112)', vals: [0.117, 0.115] },
+], { left: 140, max: 0.26, ticks: [0, 0.1, 0.2], tick: g => (g * 1000) + ' ms', fmt: v => (v * 1000).toFixed(0) + ' ms', color: () => 'var(--s1)' });
+
+// 図: 起動回数と遅れの推定
+(function () {
+  const svg = document.getElementById('proj');
+  const W = 900, H = 330, L = 64, R = 170, T = 16, B = 46;
+  const xmax = 3000, ymax = 28, a = 2.8e-6;
+  const X = v => L + (v / xmax) * (W - L - R);
+  const Y = v => T + (1 - v / ymax) * (H - T - B);
+  for (let y = 0; y <= ymax; y += 4) {
+    el('line', { x1: L, x2: W - R, y1: Y(y), y2: Y(y), stroke: y === 0 ? 'var(--axis)' : 'var(--grid)' }, svg);
+    el('text', { x: L - 10, y: Y(y) + 4, 'text-anchor': 'end', class: 'tm', 'font-size': 12 }, svg, y + ' 秒');
+  }
+  for (const x of [0, 365, 1000, 2000, 3000]) {
+    el('text', { x: X(x), y: H - B + 22, 'text-anchor': 'middle', class: 'tm', 'font-size': 12 }, svg, x === 365 ? '365' : x.toLocaleString());
+  }
+  el('text', { x: (L + W - R) / 2, y: H - 6, 'text-anchor': 'middle', class: 't2', 'font-size': 12.5 }, svg, '起動した回数 (= log のファイルの本数)');
+  let d = '', area = `M ${X(0)} ${Y(0)}`;
+  for (let n = 0; n <= xmax; n += 25) { const v = a * n * n; d += (n ? ' L ' : 'M ') + X(n) + ' ' + Y(v); area += ` L ${X(n)} ${Y(v)}`; }
+  area += ` L ${X(xmax)} ${Y(0)} Z`;
+  el('path', { d: area, fill: 'var(--s1-wash)' }, svg);
+  el('path', { d, fill: 'none', stroke: 'var(--s1)', 'stroke-width': 2 }, svg);
+  el('path', { d: `M ${X(0)} ${Y(0) - 1} H ${X(xmax)}`, stroke: 'var(--s2)', 'stroke-width': 2, fill: 'none' }, svg);
+  el('text', { x: X(xmax) + 12, y: Y(a * xmax * xmax) + 4, class: 't', 'font-size': 13, 'font-weight': 700 }, svg, '約 25 秒');
+  el('text', { x: X(xmax) + 12, y: Y(a * xmax * xmax) + 22, class: 't2', 'font-size': 12 }, svg, '純正');
+  el('text', { x: X(xmax) + 12, y: Y(0) - 22, class: 't', 'font-size': 13, 'font-weight': 700 }, svg, '0 秒');
+  el('text', { x: X(xmax) + 12, y: Y(0) - 5, class: 't2', 'font-size': 12 }, svg, 'fork (映像の後に回す)');
+  const t = tipper(document.getElementById('fig-proj'), document.getElementById('tip-proj'));
+  for (const [n, lab] of [[365, '毎日 1 回で 1 年'], [1000, ''], [2000, ''], [3000, '']]) {
+    const v = a * n * n;
+    const c = el('circle', { cx: X(n), cy: Y(v), r: 4.5, fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+    const hit = el('circle', { cx: X(n), cy: Y(v), r: 13, fill: 'transparent', tabindex: 0 }, svg);
+    const html = `<b>純正 (推定)</b><br>${n.toLocaleString()} 回${lab ? ' (' + lab + ')' : ''}: 約 ${v < 1 ? v.toFixed(1) : v.toFixed(1)} 秒`;
+    const on = () => { const b = c.getBoundingClientRect(); t.show(html, b.left + b.width / 2, b.top); };
+    hit.addEventListener('mouseenter', on); hit.addEventListener('focus', on);
+    hit.addEventListener('mouseleave', t.hide); hit.addEventListener('blur', t.hide);
+  }
+  el('text', { x: X(1000) - 10, y: Y(2.8) - 12, 'text-anchor': 'end', class: 't2', 'font-size': 12 }, svg, '1000 回で約 2.8 秒');
+  el('text', { x: X(2000) - 10, y: Y(11.2) - 12, 'text-anchor': 'end', class: 't2', 'font-size': 12 }, svg, '2000 回で約 11 秒');
+})();
+</script>
+</body>
+</html>

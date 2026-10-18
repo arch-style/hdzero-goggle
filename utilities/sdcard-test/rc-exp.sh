@@ -431,6 +431,9 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 		i=0
 		while [ ! -e /tmp/launch-report.done ] && [ $i -lt 100 ]; do usleep 100000; i=$((i + 1)); done
 	  fi
+	  # カードを使うほど重くなる処理の計測 (fill-probe.sh があれば、2026-10-18)。
+	  # fsck.fat -n を含むので数秒かかる。ビープはその後。
+	  [ -f /mnt/extsd/fill-probe.sh ] && /bin/sh /mnt/extsd/fill-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
 	  C=/sys/devices/system/cpu/cpu0/cpufreq
 	  { echo "== cpufreq at records $(cut -d' ' -f1 /proc/uptime)"
 	    echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"

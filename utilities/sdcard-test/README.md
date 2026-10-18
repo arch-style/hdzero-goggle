@@ -205,6 +205,27 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 補助 (`wifi-hello.sh`) で Wi-Fi の子機モードから SSH で入れる (ゴーグルは
 Mac の ARP の問い合わせに応えないので、ゴーグルから Mac へ ping を出す)。
 
+### 5e. カードを使うほど重くなる処理を測る (2026-10-18)
+
+`fill-probe.sh` をカードの直下に置くと、`rc-exp.sh` が記録の終わり (ビープの前) に
+1 回呼ぶ。キャッシュを捨ててから、純正の `sdstat_log_backup.sh` の番号探しのループ
+(`log/`)、`ls -l` (`DCIM/100HDZRO`、`boot-logs/`)、直下の glob、`fsck.fat -n`
+(純正アプリが起動ごとに行う点検の代わり、読むだけ) の時間を
+`boot-logs/fill-stage<段階>.txt` に書く。fsck の分だけビープが遅くなる。止めるときは
+`fill-probe.sh.off` にする。
+
+```
+utilities/sdcard-test/fill-test.sh status /Volumes/HDZERO_BOOT
+utilities/sdcard-test/fill-test.sh files  /Volumes/HDZERO_BOOT      # filltest/ に 100〜3000 本のフォルダ
+utilities/sdcard-test/fill-test.sh space  /Volumes/HDZERO_BOOT 15   # filltest/space-*.bin (3 GB ずつ) で 15 GB 使う
+utilities/sdcard-test/fill-test.sh clean  /Volumes/HDZERO_BOOT      # filltest/ を消す
+python3 -I utilities/sdcard-test/fill-report.py /Volumes/HDZERO_BOOT
+```
+
+`filltest/` は本物のフォルダとは別なので、録画の番号や再生画面には出ない。
+`fill-report.py` は同じ段階の `early-stage<段階>.txt` から、マウント時の FAT の読み込み
+時間も出す (使用量で変わるかを見る)。
+
 ### 6. 返却前
 
     cp utilities/sdcard-test/develop.sh.restore /Volumes/<SD>/develop.sh

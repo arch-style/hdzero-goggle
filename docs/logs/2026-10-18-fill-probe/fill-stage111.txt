@@ -1,0 +1,20 @@
+--- boot 87 stage 111 fill-probe start 13.54 cur=1104000 min=1104000
+df: /dev/mmcblk0p1        30529344  26538368   3990976  87% /mnt/extsd
+probe sdstat dir=/mnt/extsd/log files=85 ms=40 create_ms=0 max_index=84
+probe ls dir=/mnt/extsd/DCIM/100HDZRO files=116 ms=120
+probe ls dir=/mnt/extsd/boot-logs files=332 ms=330
+probe root dir=/mnt/extsd files=131 ms=0
+probe fsck dev=/dev/mmcblk0p1 ms=1650 rc=1 lines=10
+fsck: fsck.fat 4.2 (2021-01-31)
+fsck: There are differences between boot sector and its backup.
+fsck: This is mostly harmless. Differences: (offset:original/backup)
+fsck:   65:01/00
+fsck:   Not automatically fixing this.
+fsck: Dirty bit is set. Fs was not properly unmounted and some data may be corrupt.
+fsck:  Automatically removing dirty bit.
+fsck: 
+fsck: Leaving filesystem unchanged.
+fsck: /dev/mmcblk0p1: 862 files, 414662/477021 clusters
+fsck-tail: Leaving filesystem unchanged.
+fsck-tail: /dev/mmcblk0p1: 862 files, 414662/477021 clusters
+fill-probe end 16.38 cur=1104000 total_ms=2840

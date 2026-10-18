@@ -1,0 +1,88 @@
+=== 段階 107
+  mount     fat len 3727: FAT 読み 232 ms, dir 読み 88 ms
+  --- boot 83 stage 107 fill-probe start 13.03 cur=1104000 min=1104000
+  df: /dev/mmcblk0p1        30529344  10807872  19721472  35% /mnt/extsd
+  sdstat  log                       81 本      60 ms  作成 0 ms
+  ls      DCIM/100HDZRO            116 本     130 ms
+  ls      boot-logs                312 本     390 ms
+  root    (直下)                     126 本       0 ms
+  fsck    /dev/mmcblk0p1                    1420 ms  rc=1
+  fsck-tail: Leaving filesystem unchanged.
+  fsck-tail: /dev/mmcblk0p1: 828 files, 168873/477021 clusters
+  fill-probe end 16.11 cur=1104000 total_ms=3080
+=== 段階 108
+  mount     fat len 3727: FAT 読み 112 ms, dir 読み 90 ms
+  --- boot 84 stage 108 fill-probe start 13.77 cur=1104000 min=1104000
+  df: /dev/mmcblk0p1        30529344  10808320  19721024  35% /mnt/extsd
+  sdstat  log                       82 本      30 ms  作成 0 ms
+  ls      DCIM/100HDZRO            116 本     140 ms
+  ls      boot-logs                317 本     320 ms
+  root    (直下)                     127 本       0 ms
+  fsck    /dev/mmcblk0p1                    1260 ms  rc=1
+  fsck-tail: Leaving filesystem unchanged.
+  fsck-tail: /dev/mmcblk0p1: 835 files, 168880/477021 clusters
+  fill-probe end 16.36 cur=1104000 total_ms=2590
+=== 段階 109
+  mount     fat len 3727: FAT 読み 118 ms, dir 読み 101 ms
+  --- boot 85 stage 109 fill-probe start 13.21 cur=1104000 min=1104000
+  df: /dev/mmcblk0p1        30529344  11373504  19155840  37% /mnt/extsd
+  sdstat  log                       83 本      60 ms  作成 10 ms
+  ls      DCIM/100HDZRO            116 本     150 ms
+  ls      boot-logs                322 本     350 ms
+  root    (直下)                     129 本       0 ms
+  sdstat  filltest/log-0100        100 本      70 ms  作成 0 ms
+  sdstat  filltest/log-0300        300 本     250 ms  作成 0 ms
+  sdstat  filltest/log-1000       1000 本    2620 ms  作成 0 ms
+  sdstat  filltest/log-3000       3000 本   23910 ms  作成 30 ms
+  ls      filltest/dcim-0100       100 本     120 ms
+  ls      filltest/dcim-0300       300 本     260 ms
+  ls      filltest/dcim-1000      1000 本    1290 ms
+  ls      filltest/dcim-3000      3000 本   12430 ms
+  fsck    /dev/mmcblk0p1                    3600 ms  rc=1
+  fsck-tail: Leaving filesystem unchanged.
+  fsck-tail: /dev/mmcblk0p1: 9651 files, 177711/477021 clusters
+  fill-probe end 60.60 cur=1104000 total_ms=47390
+=== 段階 110
+  mount     fat len 3727: FAT 読み 119 ms, dir 読み 112 ms
+  --- boot 86 stage 110 fill-probe start 13.21 cur=1104000 min=1104000
+  df: /dev/mmcblk0p1        30529344  11373952  19155392  37% /mnt/extsd
+  sdstat  log                       84 本      60 ms  作成 0 ms
+  ls      DCIM/100HDZRO            116 本     120 ms
+  ls      boot-logs                327 本     380 ms
+  root    (直下)                     130 本       0 ms
+  sdstat  filltest/log-0100        100 本      80 ms  作成 0 ms
+  sdstat  filltest/log-0300        300 本     370 ms  作成 10 ms
+  sdstat  filltest/log-1000       1000 本    2780 ms  作成 10 ms
+  sdstat  filltest/log-3000       3000 本   26790 ms  作成 20 ms
+  ls      filltest/dcim-0100       100 本     120 ms
+  ls      filltest/dcim-0300       300 本     290 ms
+  ls      filltest/dcim-1000      1000 本    2170 ms
+  ls      filltest/dcim-3000      3000 本   13490 ms
+  fsck    /dev/mmcblk0p1                    4000 ms  rc=1
+  fsck-tail: Leaving filesystem unchanged.
+  fsck-tail: /dev/mmcblk0p1: 9658 files, 177718/477021 clusters
+  fill-probe end 66.60 cur=1104000 total_ms=53390
+=== 段階 111
+  mount     fat len 3727: FAT 読み 117 ms, dir 読み 114 ms
+  --- boot 87 stage 111 fill-probe start 13.54 cur=1104000 min=1104000
+  df: /dev/mmcblk0p1        30529344  26538368   3990976  87% /mnt/extsd
+  sdstat  log                       85 本      40 ms  作成 0 ms
+  ls      DCIM/100HDZRO            116 本     120 ms
+  ls      boot-logs                332 本     330 ms
+  root    (直下)                     131 本       0 ms
+  fsck    /dev/mmcblk0p1                    1650 ms  rc=1
+  fsck-tail: Leaving filesystem unchanged.
+  fsck-tail: /dev/mmcblk0p1: 862 files, 414662/477021 clusters
+  fill-probe end 16.38 cur=1104000 total_ms=2840
+=== 段階 112
+  mount     fat len 3727: FAT 読み 115 ms, dir 読み 103 ms
+  --- boot 88 stage 112 fill-probe start 13.18 cur=1104000 min=1104000
+  df: /dev/mmcblk0p1        30529344  26538816   3990528  87% /mnt/extsd
+  sdstat  log                       86 本      60 ms  作成 0 ms
+  ls      DCIM/100HDZRO            116 本     130 ms
+  ls      boot-logs                337 本     400 ms
+  root    (直下)                     132 本       0 ms
+  fsck    /dev/mmcblk0p1                    1720 ms  rc=1
+  fsck-tail: Leaving filesystem unchanged.
+  fsck-tail: /dev/mmcblk0p1: 869 files, 414669/477021 clusters
+  fill-probe end 16.76 cur=1104000 total_ms=3580
