@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HDZero Goggle 2 起動高速化のしくみ</title>
+<style>
+  :root { --fg:#1d1d1f; --muted:#6e6e73; --line:#d2d2d7; --bg:#fff; --soft:#f5f5f7; --accent:#0a66c2; --warn:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#f5f5f7; --muted:#a1a1a6; --line:#3a3a3c; --bg:#1c1c1e; --soft:#2c2c2e; --accent:#64a8ff; --warn:#ff8a80; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.75 -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.25rem; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .big { display:flex; gap:16px; flex-wrap:wrap; margin: 20px 0; }
+  .big div { flex:1 1 180px; background:var(--soft); border-radius:12px; padding:16px; }
+  .big b { display:block; font-size:2rem; line-height:1.2; }
+  .big span { color:var(--muted); font-size:.9rem; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: .95rem; }
+  th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .card { background:var(--soft); border-radius:12px; padding:14px 18px; margin:12px 0; }
+  .card h3 { margin:0 0 4px; font-size:1.05rem; }
+  .card p { margin:4px 0; }
+  .note { color: var(--muted); font-size: .9rem; }
+  .warn { border-left: 4px solid var(--warn); padding: 8px 14px; background: var(--soft); border-radius: 0 8px 8px 0; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: .9em; background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+
+  .map { display:grid; grid-template-columns: 1fr; gap:4px; margin:16px 0; }
+  .blk { display:grid; grid-template-columns: 150px 1fr auto; gap:12px; align-items:center; border-radius:8px; padding:8px 12px; color:#1d1d1f; }
+  .blk .nm { font-weight:700; }
+  .blk .ds { font-size:.9rem; }
+  .blk .sz { font-size:.85rem; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .c-boot { background:#cfe3ff; } .c-os { background:#e3e3e8; } .c-rw { background:#d4f0dc; } .c-app { background:#ffe2c2; } .c-sd { background:#f3d6f5; }
+  .tag { display:inline-block; font-size:.75rem; font-weight:700; padding:1px 7px; border-radius:10px; margin-left:6px; background:#1d1d1f; color:#fff; }
+  .tag.fw { background:#b35c00; } .tag.ch { background:#0a66c2; } .tag.no { background:#8e8e93; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; font-size:.85rem; color:var(--muted); }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  .flow { counter-reset: st; padding-left:0; list-style:none; }
+  .flow li { counter-increment: st; position:relative; padding:6px 0 6px 40px; border-bottom:1px solid var(--line); }
+  .flow li::before { content: counter(st); position:absolute; left:0; top:6px; width:26px; height:26px; border-radius:13px; background:var(--accent); color:#fff; text-align:center; line-height:26px; font-size:.85rem; font-weight:700; }
+</style>
+</head>
+<body>
+<main>
+<h1>HDZero Goggle 2 起動高速化のしくみ</h1>
+<p class="sub">電源から HDZero の映像が出るまでを、純正の約 22 秒から約 6 秒にした方法のまとめ (2026-10-28 時点)</p>
+
+<div class="big">
+  <div><b>約 22 s</b><span>純正 9.5.1</span></div>
+  <div><b>5.94 s</b><span>いまの fork (内部の時計、boot 161)</span></div>
+  <div><b>約 7.5 s</b><span>スイッチから表示まで (ストップウォッチ)</span></div>
+</div>
+<p class="note">内部の時計は SoC の RTC が数え始めてからの秒です。スイッチの長押し判定、電源 IC の立ち上げ、パネルが光るまでの分が入らないので、手で測ると 1.5 秒ほど長くなります (内訳は未測定)。</p>
+
+<h2>考え方</h2>
+<p>純正の起動は「念のための待ち」と「遅い読み出し」でできていました。映像に要らない処理を後ろへ回し、待ちを本当に必要な所だけにし、遅いフラッシュの代わりに SD カードから読む。この 3 つが柱です。</p>
+
+<h2>やったこと</h2>
+
+<div class="card"><h3>1. 要らない待ちを消す</h3>
+<p>USB の準備 (S50usb) の <code>sleep 2</code>、rc.sh の <code>sleep 1</code> を外しました。Goggle 2 には USB の口がありません。機器の一斉認識 (udev の trigger と settle、2.3 秒) もやめ、必要だった <code>/dev/rtc</code> のリンクだけを作ります。SD の記録の写し (1.2 秒) は映像の後に回しました。</p></div>
+
+<div class="card"><h3>2. I2C の「関門」で待ちを最小にする</h3>
+<p>HDMI 出力、電池電圧、傾きセンサーがつながる I2C 1 番は、カーネル起動から約 7.6 秒より前に触ると固まり、電源を切るまで戻りません。純正の sleep はこれを避ける役もしていました。そこでアプリを早く起動し、1 番の通信だけを決まった時刻まで待たせます (<code>HDZ_I2C1_NOT_BEFORE</code>)。HDMI 出力と傾きセンサーの初期化は映像の後に回しました。映像に要る受信チップ (2 番) は待たずに使えます。</p></div>
+
+<div class="card"><h3>3. 遅いフラッシュより SD カードから読む</h3>
+<p>内蔵の NOR フラッシュは毎秒約 5 MB と遅いので、共有ライブラリ 7.1 MB とアプリ本体 3.3 MB をカードから /tmp に写して使います。起動スクリプトの写し (rcS v3) が 2.1 秒ごろにカードを先にマウントし、写しを早く始めます。カードは 64 KB クラスタで作り、マウント時の読み込みを 0.12 秒にしました。</p></div>
+
+<div class="card"><h3>4. 並行して進める</h3>
+<p>画面の設定 (dispw) を裏で早く始めます。画面のドライバ disp.ko にあった 1 秒の待ちは、100 ms にした写しをカードから読みます。</p></div>
+
+<div class="card"><h3>5. 起動中は CPU を最高クロックに</h3>
+<p>標準の調速 (ondemand) は 2 秒に 1 回しか負荷を見ないので、起動の多くを 816 MHz で過ごしていました。rcS の写しの先頭で 1104 MHz に固定し、15 秒後に元へ戻します。</p></div>
+
+<div class="card"><h3>6. アプリ側の工夫</h3>
+<p>アプリを直接起動します (起動スクリプトの連鎖を省く)。受信チップの工場較正値はカードに控えて 2 回目から読み出しを省き、OSD の準備はチューナーの初期化と重ねます。OSD のフォント (BTFL) もカードから読みます。</p></div>
+
+<h2>いまの内訳 (boot 158)</h2>
+<table>
+<tr><th>区間</th><th class="n">長さ</th><th>中身</th></tr>
+<tr><td>ブートローダ</td><td class="n">1.4 s</td><td>boot0 と u-boot。カーネルを NOR から読む</td></tr>
+<tr><td>カーネル</td><td class="n">1.2 s</td><td>ドライバの初期化。SD と Wi-Fi が 0.33 s、映像用メモリが 0.2 s</td></tr>
+<tr><td>preinit</td><td class="n">0.65 s</td><td>読み出し専用の rootfs と上書き領域の準備</td></tr>
+<tr><td>起動スクリプト</td><td class="n">1.1 s</td><td>アプリ領域のマウント 0.47 s ほか</td></tr>
+<tr><td>画面の設定まで</td><td class="n">0.4 s</td><td>アプリはこの完了を待って起動</td></tr>
+<tr><td>アプリ</td><td class="n">1.2 s</td><td>受信チップの初期化 0.73 s が中心</td></tr>
+</table>
+<p class="note">1.9〜3.3 秒の区間は 2 つの CPU コアと SD と NOR の処理量でいっぱいで、順番の入れ替えではもう縮みません。</p>
+
+<h2>内蔵フラッシュの区画 (32 MB の NOR)</h2>
+<div class="legend">
+  <span><i class="c-boot"></i>起動の部品</span><span><i class="c-os"></i>OS (読み出し専用)</span>
+  <span><i class="c-rw"></i>書き込める小さな領域</span><span><i class="c-app"></i>アプリ</span><span><i class="c-sd"></i>SD カード (別の装置)</span>
+</div>
+<div class="map">
+  <div class="blk c-boot"><span class="nm">uboot</span><span class="ds">電源を入れて最初に動く boot0 と u-boot、機器の設計図 (DT)、区画の表 <span class="tag no">変更なし</span></span><span class="sz">1 MB</span></div>
+  <div class="blk c-boot"><span class="nm">boot</span><span class="ds">Linux カーネル (#69) <span class="tag no">変更なし</span></span><span class="sz">3.2 MB</span></div>
+  <div class="blk c-os"><span class="nm">rootfs</span><span class="ds">OS 本体。busybox、共有ライブラリ、preinit と起動スクリプト。書き換えられない <span class="tag no">変更なし</span></span><span class="sz">11.6 MB</span></div>
+  <div class="blk c-rw"><span class="nm">overlay</span><span class="ds">rootfs の上に重ねる書き込み層。ここに置いたファイルが rootfs の同じ名前を隠す <span class="tag ch">rc.final と rcS を追加</span></span><span class="sz">0.5 MB</span></div>
+  <div class="blk c-rw"><span class="nm">env</span><span class="ds">u-boot の設定 (起動手順、カーネルへの引数) <span class="tag no">いまは純正</span></span><span class="sz">0.1 MB</span></div>
+  <div class="blk c-boot"><span class="nm">bootlogo</span><span class="ds">起動時のロゴ画像 <span class="tag no">変更なし</span></span><span class="sz">0.3 MB</span></div>
+  <div class="blk c-app"><span class="nm">app</span><span class="ds">/mnt/app。純正アプリ、ドライバ (.ko)、rc.sh、設定 setting.ini <span class="tag fw">ファームウェアはここ</span> <span class="tag ch">rc.sh に入口 7 行</span></span><span class="sz">12 MB</span></div>
+  <div class="blk c-rw"><span class="nm">UDISK</span><span class="ds">/mnt/UDISK。更新のときの設定の退避場所。ほぼ空 <span class="tag no">変更なし</span></span><span class="sz">3.3 MB</span></div>
+</div>
+<div class="map">
+  <div class="blk c-sd"><span class="nm">SD カード</span><span class="ds">fork 本体、実験スクリプト、ライブラリとドライバの写し、フォント、録画 <span class="tag ch">高速化の中身はここ</span></span><span class="sz">32 GB</span></div>
+</div>
+<p class="note">メニューのファームウェア更新 (<code>HDZERO_GOGGLE2-*.bin</code>) が書くのは app 区画のアプリと、受信チップと FPGA 用のファーム (RX、VA) です。RX と VA は NOR ではなく、それぞれのチップ側に書かれます (推測、未確認)。復旧用の <code>HDZG_OS.bin</code> は boot から app までを丸ごと書き直します。</p>
+
+<h2>電源から映像までの流れ</h2>
+<ol class="flow">
+  <li><b>boot0 と u-boot</b> (uboot 区画): メモリを初期化し、カーネルを読んで起動する。</li>
+  <li><b>カーネル</b> (boot 区画): ドライバを初期化し、rootfs を読み出し専用でつなぐ。</li>
+  <li><b>preinit</b> (rootfs の <code>/pseudo_init</code> と <code>/etc/preinit</code>): /proc や /dev などの基本の場所を作り、区画の名前のリンクを作り、overlay を rootfs の上に重ねて「書けるように見える」ルートにする。</li>
+  <li><b>起動スクリプト rcS</b>: app 区画を /mnt/app につなぎ (更新の確認も)、UDISK をつなぐ。overlay の rcS の写しは、ここで CPU を最高クロックに固定し、SD カードを先につないで写しを始める。</li>
+  <li><b>rc.final が S スクリプトを順に実行</b>: 映像ドライバの読み込み (S00mpp)、区画名のリンク (S00part)、SD カードのマウント (S01app)、機器の認識 (S10udev)、ネットワーク (S40network)、USB (S50usb)。overlay の rc.final は、ここでカードの init-exp.sh に「省く、裏に回す」を決めさせる。</li>
+  <li><b>rc.sh</b> (app 区画): 画面の設定、ドライバ、録画プロセス、アプリの起動。入口が、カードに rc-exp.sh があればそちらを代わりに実行する。</li>
+  <li><b>アプリ</b>: 受信チップを初期化して映像を出す。fork は SD カードから写したものが動く。</li>
+</ol>
+
+<h2>どこを書き換えたか</h2>
+<table>
+<tr><th>場所</th><th>中身</th><th>カードを抜くと</th></tr>
+<tr><td>アプリ (fork)</td><td>ソースをしっかり書き換えた本体。<b>フラッシュには焼いておらず、SD カードから起動</b></td><td>純正アプリが動く</td></tr>
+<tr><td>app 区画の rc.sh</td><td>先頭に 7 行の入口だけ</td><td>純正どおり</td></tr>
+<tr><td>app 区画の setting.ini</td><td>自分の設定 (fork の速さの設定を含む)</td><td>そのまま使われる</td></tr>
+<tr><td>overlay の rc.final</td><td>入口と、段の区切りの印</td><td>純正どおり</td></tr>
+<tr><td>overlay の rcS</td><td>入口に加えて、起動中の CPU 最高クロック固定 (15 秒) と SD の早期マウント。<b>これだけはカード無しでも効く</b></td><td>クロック固定だけ残る</td></tr>
+<tr><td>uboot、boot、rootfs、env、bootlogo、UDISK</td><td>変更なし (env は試験で一時的に変えたが純正に戻した)</td><td>—</td></tr>
+</table>
+<p>PhoenixCard で全体を戻した後も、カードのスクリプトが設定、入口、rcS をすべて自動で入れ直せます (2 回起動)。</p>
+
+<h2>残りと注意</h2>
+<p>残る大きな塊は、ブートローダとカーネルの合わせて約 2.6 秒です。カードから自作のブートローダ領域で起動する道は作れましたが (14 回成功)、作り直したカーネルで起動したところ NOR の中身を壊し、復旧しました。</p>
+<p class="warn">規則: 作り直したカーネルは、NOR の読み書きが純正と同じだと確かめるまで、NOR を書き込み可能でマウントさせない。次は NOR に触らない検証用の仕組みを先に作ります。</p>
+<p class="note">詳しい記録: <code>docs/goggle2-handoff.md</code>、<code>docs/goggle2-card-boot.md</code>、<code>docs/goggle2-boot-notes.html</code></p>
+</main>
+</body>
+</html>
