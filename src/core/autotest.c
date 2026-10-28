@@ -62,6 +62,10 @@
 //   grabcount <name> [w h fps]  the same, only logging its pixels at 255 (where
 //                        the live layer shows through)
 //   exit                 leave the player
+//   chscan <n>           Channel Scan of HDZero channel n (1-12 for R1..F4,
+//                        1-8 for L1..L8), as a dial click in video would; needs the
+//                        option on (Input Feel). "chscan:" lines in the log
+//   waitscan [ms]        wait until that scan has tuned (default 15000)
 //   halt                 stop the script here
 //
 // The file is renamed to autotest.ran.txt as it starts, so a crash mid-script
@@ -83,7 +87,9 @@
 #include <lvgl/lvgl.h>
 
 #include "core/app_state.h"
+#include "core/channel_scan.h"
 #include "core/common.hh"
+#include "core/defines.h"
 #include "core/dvr.h"
 #include "core/settings.h"
 #include "core/thread.h"
@@ -445,6 +451,29 @@ static void at_label(const char *line) {
     pthread_mutex_unlock(&lvgl_mutex);
 }
 
+// What the dial's click does with Channel Scan on, minus the turning.
+static void at_chscan(int ch) {
+    pthread_mutex_lock(&lvgl_mutex);
+    if (g_app_state != APP_STATE_VIDEO || !channel_scan_dial())
+        LOGW("AT chscan %d: needs video, on HDZero or analog, with Channel Scan on", ch);
+    else {
+        channel_osd_mode = 0x80 | (ch & 0x7f);
+        if (!channel_scan_start(ch))
+            channel_osd_mode = CHANNEL_SHOWTIME;
+    }
+    pthread_mutex_unlock(&lvgl_mutex);
+}
+
+static void at_wait_scan(int timeout_ms) {
+    int waited = 0;
+
+    while (channel_scan_busy() && waited < timeout_ms) {
+        at_sleep_ms(50);
+        waited += 50;
+    }
+    LOGI("AT waitscan: %s after %dms", channel_scan_busy() ? "still scanning" : "done", waited);
+}
+
 static void at_wait_resume(int timeout_ms) {
     const uint32_t t0 = lv_tick_get();
 
@@ -584,6 +613,10 @@ static bool at_run(int i, char *line) {
         vigrab_close();
     } else if (strcmp(op, "label") == 0) {
         at_label(line);
+    } else if (strcmp(op, "chscan") == 0) {
+        at_chscan(atoi(a1));
+    } else if (strcmp(op, "waitscan") == 0) {
+        at_wait_scan(a1[0] ? atoi(a1) : 15000);
     } else if (strcmp(op, "source") == 0) {
         pthread_mutex_lock(&lvgl_mutex);
         source_select_named(a1);

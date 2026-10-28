@@ -18,6 +18,7 @@
 
 #include "core/app_state.h"
 #include "core/battery.h"
+#include "core/channel_scan.h"
 #include "core/common.hh"
 #include "core/dvr.h"
 #include "core/elrs.h"
@@ -443,9 +444,17 @@ void osd_channel_show(bool bShow) {
     char buf[32];
 
     if (channel_osd_mode & 0x80) {
+        // With Channel Scan the dial counts in HDZero channels on analog too.
+        uint8_t hdz_names = (g_source_info.source == SOURCE_HDZERO) || channel_scan_dial();
+        const char *name;
+
         ch = channel_osd_mode & 0x7F;
         color = lv_color_make(0xFF, 0x20, 0x20);
-        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
+        name = channel2str(hdz_names, g_setting.source.hdzero_band, ch);
+        if (channel_scan_busy())
+            snprintf(buf, sizeof(buf), "  Scan %s...  ", name);
+        else
+            snprintf(buf, sizeof(buf), "  To %s?  ", name);
         lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], LV_OPA_100, 0);
     } else {
         if (g_source_info.source == SOURCE_HDZERO) {

@@ -100,6 +100,10 @@ void osd_rec_update(bool enable);
 void osd_show(bool show);
 void osd_update_element_positions();
 char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel);
+// The channel line: "CH:R4", or the dial's question while one is being picked.
+// The OSD update draws it; core/channel_scan.c draws it itself, holding the
+// lock that update waits on.
+void osd_channel_show(bool bShow);
 void load_fc_osd_font(uint8_t);
 // Start reading the OSD fonts in the background; call before the slow parts
 // of boot so the file I/O overlaps with them.

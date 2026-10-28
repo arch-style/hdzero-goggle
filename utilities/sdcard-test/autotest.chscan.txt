@@ -1,0 +1,40 @@
+# Channel Scan の確認 (約 1〜2 分)。先にメニューの Input Feel で Channel Scan を On にしておく。
+# HDZero で R1〜R8 を順にスキャンし、続いてアナログから R4 をスキャンする。
+# 結果はログの "chscan:" の行: 段ごと (HDZero 今の帯域 / もう一方 / アナログ) に、
+# 見つかったか、何 ms かかったか、アナログは RSSI の mV と % を書く。
+# VTX をどこかのチャンネルに出しておくと、そのチャンネルでどこに止まったかが分かる。
+# 終わると最後にスキャンしたチャンネル (R4) に居る。
+echo chscan from hdzero
+source hdzero
+wait 4000
+chscan 1
+waitscan
+wait 2000
+chscan 2
+waitscan
+wait 2000
+chscan 3
+waitscan
+wait 2000
+chscan 4
+waitscan
+wait 2000
+chscan 5
+waitscan
+wait 2000
+chscan 6
+waitscan
+wait 2000
+chscan 7
+waitscan
+wait 2000
+chscan 8
+waitscan
+wait 2000
+echo chscan from analog
+source analog
+wait 3000
+chscan 4
+waitscan
+wait 3000
+beep 3

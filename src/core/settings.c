@@ -162,6 +162,7 @@ const setting_t g_setting_defaults = {
         .button_beep = false,
         .dial_beep = false,
         .long_press_ms = 500,
+        .channel_scan = false,
     },
     .osd = {
         .orbit = 2,
@@ -758,6 +759,7 @@ void settings_load(void) {
     g_setting.input.button_beep = settings_get_bool("input", "button_beep", g_setting_defaults.input.button_beep);
     g_setting.input.dial_beep = settings_get_bool("input", "dial_beep", g_setting_defaults.input.dial_beep);
     g_setting.input.long_press_ms = ini_getl("input", "long_press_ms", g_setting_defaults.input.long_press_ms, SETTING_INI);
+    g_setting.input.channel_scan = settings_get_bool("input", "channel_scan", g_setting_defaults.input.channel_scan);
     if (long_press_choice_index(g_setting.input.long_press_ms) < 0)
         g_setting.input.long_press_ms = g_setting_defaults.input.long_press_ms;
     LOGI("speed: fast_menu=%s keep_display=%s skip_audio=%s boot_display=%s boot_fonts=%s skip_boot_menu=%s async_imu=%s async_display=%s ui_throttle=%s",

@@ -454,6 +454,9 @@ typedef struct {
     // How long a press has to be held to count as long, when Timed Long Press
     // is on. One of LONG_PRESS_CHOICES.
     uint16_t long_press_ms;
+    // Channel Scan: a dial click finds what is on air on the channel (HDZero
+    // wide, narrow, analog) and tunes to it. See core/channel_scan.h.
+    bool channel_scan;
 } setting_input_t;
 
 // Offered on the settings page as a slider, longest first.

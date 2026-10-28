@@ -26,6 +26,7 @@
 #include "osd.h"
 
 #include "core/app_state.h"
+#include "core/channel_scan.h"
 #include "core/dvr.h"
 #include "core/elrs.h"
 #include "core/favorites.h"
@@ -97,6 +98,16 @@ void exit_tune_channel() {
     channel_osd_mode = 0;
 }
 
+// The scan's end of a click: what the confirm below does once it has tuned.
+// Until then tune_state stays 2 with the timer stopped, which is the one state
+// tune_channel_timer() leaves channel_osd_mode alone in; with tune_state 1 it
+// would count the channel in "To R4?" down as if it were the show time.
+void tune_channel_done() {
+    tune_timer = 0;
+    tune_state = 1;
+    channel_osd_mode = CHANNEL_SHOWTIME;
+}
+
 void tune_channel(uint8_t action) {
     static uint8_t channel = 0;
 
@@ -129,7 +140,9 @@ void tune_channel(uint8_t action) {
 #if defined HDZGOGGLE
             channel = g_setting.scan.channel;
 #elif defined(HDZBOXPRO) || defined(HDZGOGGLE2)
-            if (g_source_info.source == SOURCE_HDZERO) {
+            // With Channel Scan the dial counts in HDZero channels on analog
+            // as well, and scan.channel is where it is.
+            if (g_source_info.source == SOURCE_HDZERO || channel_scan_dial()) {
                 channel = g_setting.scan.channel;
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
                 channel = g_setting.source.analog_channel;
@@ -143,8 +156,9 @@ void tune_channel(uint8_t action) {
     if (tune_state != 2)
         return;
 
+    bool scan_dial = channel_scan_dial();
     uint8_t channel_num;
-    if (g_source_info.source == SOURCE_HDZERO)
+    if (g_source_info.source == SOURCE_HDZERO || scan_dial)
         channel_num = HDZERO_CHANNEL_NUM;
     else if (g_source_info.source == SOURCE_AV_MODULE)
         channel_num = ANALOG_CHANNEL_NUM;
@@ -177,6 +191,21 @@ void tune_channel(uint8_t action) {
 
     case DIAL_KEY_PRESS: // confirm to tune with VTX freq send
     case DIAL_KEY_CLICK: // confirm to tune
+        // A click scans, even back to the channel already tuned: that is how
+        // to find a VTX that has changed between digital and analog. A long
+        // press tells the VTX to come to this channel, so there is nothing on
+        // it to find yet, and it tunes as it always has.
+        if ((action == DIAL_KEY_CLICK) && scan_dial) {
+            tune_timer = 0;
+            channel_osd_mode = 0x80 | channel;
+            if (channel_scan_start(channel))
+                return; // the scan calls tune_channel_done()
+
+            tune_state = 1;
+            channel_osd_mode = CHANNEL_SHOWTIME;
+            return;
+        }
+
         if (g_source_info.source == SOURCE_HDZERO) {
             if (g_setting.scan.channel != channel) {
                 g_setting.scan.channel = channel;
@@ -188,8 +217,19 @@ void tune_channel(uint8_t action) {
                 }
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
-            if (g_setting.source.analog_channel != channel) {
-                g_setting.source.analog_channel = channel;
+            uint8_t analog_ch = channel;
+
+            if (scan_dial) {
+                // Dialled in HDZero channels: remember where the dial is, and
+                // tune analog to the same frequency.
+                if (g_setting.scan.channel != channel) {
+                    g_setting.scan.channel = channel;
+                    ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
+                }
+                analog_ch = channel_scan_analog_of(g_setting.source.hdzero_band, channel);
+            }
+            if ((analog_ch != 0) && (g_setting.source.analog_channel != analog_ch)) {
+                g_setting.source.analog_channel = analog_ch;
                 ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
                 rtc6715.set_ch(g_setting.source.analog_channel - 1);

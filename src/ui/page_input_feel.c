@@ -24,6 +24,8 @@ enum {
     ROW_HEAD_SOUND,
     ROW_BUTTON_BEEP,
     ROW_DIAL_BEEP,
+    ROW_HEAD_CHANNEL,
+    ROW_CHANNEL_SCAN,
     ROW_BACK,
     ROW_COUNT
 };
@@ -31,6 +33,7 @@ enum {
 #define SAVING_LONG_PRESS    "500ms fixed"
 #define DURATION_BUTTON_BEEP "beep 50/200ms"
 #define DURATION_DIAL_BEEP   "beep 15ms"
+#define ORDER_CHANNEL_SCAN   "W/N, analog"
 
 _Static_assert(ROW_COUNT <= MAX_PANELS, "Input Feel has more rows than MAX_PANELS");
 
@@ -38,14 +41,15 @@ _Static_assert(ROW_COUNT <= MAX_PANELS, "Input Feel has more rows than MAX_PANEL
 
 static lv_coord_t col_dsc[] = SPEED_COL_DSC;
 static lv_coord_t row_dsc[] = {FEEL_ROW_H, FEEL_ROW_H, FEEL_ROW_H, FEEL_ROW_H,
-                               FEEL_ROW_H, FEEL_ROW_H, FEEL_ROW_H,
-                               LV_GRID_TEMPLATE_LAST};
+                               FEEL_ROW_H, FEEL_ROW_H, FEEL_ROW_H, FEEL_ROW_H,
+                               FEEL_ROW_H, LV_GRID_TEMPLATE_LAST};
 
 static speed_page_t pg;
 
 static btn_group_t btn_group_long_press;
 static btn_group_t btn_group_button_beep;
 static btn_group_t btn_group_dial_beep;
+static btn_group_t btn_group_channel_scan;
 static slider_group_t slider_long_press;
 
 // The slider carries an index into long_press_choices, and shows the value.
@@ -86,6 +90,9 @@ static const char *comment_text(int row) {
 
     case ROW_DIAL_BEEP:
         return _lang("One 15ms beep per detent.");
+
+    case ROW_CHANNEL_SCAN:
+        return _lang("A dial click tunes the channel's HDZero (this BW, then the other) or analog, whichever is on air.");
 
     default:
         break;
@@ -141,6 +148,10 @@ static lv_obj_t *page_input_feel_create(lv_obj_t *parent, panel_arr_t *arr) {
                  g_setting.input.button_beep, DURATION_BUTTON_BEEP, ROW_BUTTON_BEEP);
     speed_toggle(&pg, &btn_group_dial_beep, "Dial Beep",
                  g_setting.input.dial_beep, DURATION_DIAL_BEEP, ROW_DIAL_BEEP);
+
+    speed_heading(&pg, arr, "Channel", ROW_HEAD_CHANNEL);
+    speed_toggle(&pg, &btn_group_channel_scan, "Channel Scan",
+                 g_setting.input.channel_scan, ORDER_CHANNEL_SCAN, ROW_CHANNEL_SCAN);
 
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
     create_label_item(cont, buf, 1, ROW_BACK, 3);
@@ -213,6 +224,11 @@ static void on_click(uint8_t key, int sel) {
 
     case ROW_DIAL_BEEP:
         speed_store(&btn_group_dial_beep, &g_setting.input.dial_beep, "input", "dial_beep");
+        break;
+
+    case ROW_CHANNEL_SCAN:
+        speed_store(&btn_group_channel_scan, &g_setting.input.channel_scan, "input", "channel_scan");
+        LOGI("input: channel_scan=%d", g_setting.input.channel_scan);
         break;
 
     default:

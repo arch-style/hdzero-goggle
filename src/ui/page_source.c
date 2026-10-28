@@ -10,6 +10,7 @@
 #include "../conf/ui.h"
 
 #include "core/app_state.h"
+#include "core/channel_scan.h"
 #include "core/common.hh"
 #include "core/dvr.h"
 #include "core/osd.h"
@@ -303,6 +304,7 @@ static void page_source_select_av_in() {
 static void page_source_select_analog() {
     source_switch_hold();
     source_stop_recording();
+    channel_scan_carry_to_analog();
     app_switch_to_analog(0);
     app_state_push(APP_STATE_VIDEO);
     g_source_info.source = SOURCE_AV_MODULE;
@@ -310,6 +312,14 @@ static void page_source_select_analog() {
     dvr_enable_line_out(true);
     source_switch_release();
     osd_source_name("ANALOG");
+}
+
+void source_select_hdzero() {
+    page_source_select_hdzero();
+}
+
+void source_select_analog() {
+    page_source_select_analog();
 }
 
 void source_toggle() {
@@ -386,18 +396,25 @@ void source_cycle() {
 // The picture has to be rebuilt, because the bandwidth is set inside the
 // tuner init that app_switch_to_hdzero() runs; HDZero_open() sees the change
 // and closes and reopens the receivers itself.
-void source_toggle_hdzero_bw() {
-    g_setting.source.hdzero_bw = (g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_WIDE)
-                                     ? SETTING_SOURCES_HDZERO_BW_NARROW
-                                     : SETTING_SOURCES_HDZERO_BW_WIDE;
+void source_set_hdzero_bw(setting_sources_hdzero_bw_t bw) {
+    g_setting.source.hdzero_bw = bw;
     ini_putl("source", "hdzero_bw", g_setting.source.hdzero_bw, SETTING_INI);
     // The switch this causes is otherwise indistinguishable in the log from a
     // channel change, and this fork is read from its logs.
     LOGI("hdzero bw: %s", g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_NARROW ? "narrow" : "wide");
 
     // Keep the row on this page in step. Before the page is built its button
-    // group holds no buttons, and this is then a no-op.
-    btn_group_set_sel(&btn_group1, g_setting.source.hdzero_bw);
+    // group holds no buttons, and this is then a no-op. It is group 2: group
+    // 1 is the band, which this used to set to the bandwidth's index, so the
+    // Band row showed Lowband after a press to Narrow and a click on it then
+    // toggled from there.
+    btn_group_set_sel(&btn_group2, g_setting.source.hdzero_bw);
+}
+
+void source_toggle_hdzero_bw() {
+    source_set_hdzero_bw((g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_WIDE)
+                             ? SETTING_SOURCES_HDZERO_BW_NARROW
+                             : SETTING_SOURCES_HDZERO_BW_WIDE);
 
     if (g_source_info.source == SOURCE_HDZERO) {
         // The bandwidth is set inside the tuner init, so this closes the

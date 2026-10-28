@@ -19,6 +19,7 @@ void tune_channel_confirm();
 void tune_channel_next();
 void tune_channel_prev();
 void exit_tune_channel();
+void tune_channel_done();
 void rbtn_click(right_button_t click_type);
 
 extern void (*btn_click_callback)();
