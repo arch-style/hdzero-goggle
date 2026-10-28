@@ -20,25 +20,30 @@ typedef struct {
 } setting_scan_t;
 
 #define FAVORITES_MAX 8
+#define FAVORITES_SETS 4
 
 typedef struct {
-    bool enable;
     // How many of the slots below are in use, 1..FAVORITES_MAX.
     uint8_t count;
-    // 0 marks an empty slot, otherwise a 1-based channel index. What the index
-    // means depends on which list this is: a channel within the currently
-    // selected band for HDZero, one of the 48 analog channels for analog.
+    // 0 marks an empty slot, otherwise one of the 48 analog channels
+    // (1-based, channel2str()'s analog order). HDZero and analog share the
+    // set: HDZero tunes the same frequency where it has one and skips the
+    // slot where it does not (A, B, most of E and F, the other HDZero band).
     uint8_t channel[FAVORITES_MAX];
-} setting_favorites_list_t;
+} setting_favorites_set_t;
 
-#define FAVORITES_INI_HDZERO "favorites"
-#define FAVORITES_INI_ANALOG "favorites_analog"
+// [favorites_set1] .. [favorites_set4], with "active" in [favorites_sets].
+#define FAVORITES_INI_SETS "favorites_sets"
+#define FAVORITES_INI_SET  "favorites_set%d"
+
+// The per-source lists these replaced. Read once, to carry them over.
+#define FAVORITES_INI_OLD_HDZERO "favorites"
+#define FAVORITES_INI_OLD_ANALOG "favorites_analog"
 
 typedef struct {
-    // Kept apart because the same index means different channels on each
-    // source: 4 is R4 on HDZero and A4 on analog.
-    setting_favorites_list_t hdzero;
-    setting_favorites_list_t analog;
+    // 0 = favorites off, otherwise the set (1..FAVORITES_SETS) the dial uses.
+    uint8_t active;
+    setting_favorites_set_t set[FAVORITES_SETS];
 } setting_favorites_t;
 
 typedef enum {

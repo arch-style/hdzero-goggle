@@ -13,6 +13,7 @@
 
 #include "../conf/targets.h"
 
+#include "core/favorites.h"
 #include "core/self_test.h"
 #include "lang/language.h"
 #include "driver/dm6302.h"
@@ -44,15 +45,12 @@ const setting_t g_setting_defaults = {
         .channel = 1,
     },
     .favorites = {
-        .hdzero = {
-            .enable = false,
-            .count = 4,
-            .channel = {0, 0, 0, 0, 0, 0, 0, 0},
-        },
-        .analog = {
-            .enable = false,
-            .count = 4,
-            .channel = {0, 0, 0, 0, 0, 0, 0, 0},
+        .active = 0,
+        .set = {
+            {.count = 4, .channel = {0, 0, 0, 0, 0, 0, 0, 0}},
+            {.count = 4, .channel = {0, 0, 0, 0, 0, 0, 0, 0}},
+            {.count = 4, .channel = {0, 0, 0, 0, 0, 0, 0, 0}},
+            {.count = 4, .channel = {0, 0, 0, 0, 0, 0, 0, 0}},
         },
     },
     .fans = {
@@ -316,19 +314,17 @@ const setting_t g_setting_defaults = {
     .has_all_features = true,
 };
 
-// channel_max is the width of the name table channel2str() indexes for this
-// list, not what the current band happens to offer: a slot registered on
-// Raceband is still a legal 12 while Lowband is selected, and slot_usable()
-// is what decides whether it can be tuned to. Anything past the table is a
-// hand-edited setting.ini, and channel2str() indexes straight into the table,
-// so it has to be turned into an empty slot here rather than trusted.
-static void settings_load_favorites(setting_favorites_list_t *list, const setting_favorites_list_t *defaults,
-                                    const char *section, uint8_t channel_max) {
-    list->enable = settings_get_bool((char *)section, "enable", defaults->enable);
-
-    list->count = ini_getl(section, "count", defaults->count, SETTING_INI);
-    if ((list->count < 1) || (list->count > FAVORITES_MAX))
-        list->count = defaults->count;
+// One set, or one of the per-source lists before them, from `section`.
+// channel_max is the width of the name table its numbers index, not what the
+// current band happens to offer: the favorites code decides what can be tuned
+// to. Anything past the table is a hand-edited setting.ini, and channel2str()
+// indexes straight into the table, so it has to be turned into an empty slot
+// here rather than trusted.
+static void settings_load_favorites_set(setting_favorites_set_t *fs, const setting_favorites_set_t *defaults,
+                                        const char *section, uint8_t channel_max) {
+    fs->count = ini_getl(section, "count", defaults->count, SETTING_INI);
+    if ((fs->count < 1) || (fs->count > FAVORITES_MAX))
+        fs->count = defaults->count;
 
     for (int i = 0; i < FAVORITES_MAX; i++) {
         char key[8];
@@ -343,7 +339,68 @@ static void settings_load_favorites(setting_favorites_list_t *list, const settin
             ch = 0;
         }
 
-        list->channel[i] = (uint8_t)ch;
+        fs->channel[i] = (uint8_t)ch;
+    }
+}
+
+// Before the sets, HDZero and analog each had a list of their own, and the
+// HDZero one was numbered within whatever band was selected: 1-8 meant L1-L8
+// on the low band, 9-12 were always the race band's E1 F1 F2 F4. The HDZero
+// list becomes set 1 and the analog list set 2, and the set in use is
+// whichever list was switched on, HDZero first. Written out straight away,
+// because the old HDZero numbers mean other channels once the band changes.
+static void settings_migrate_favorites(void) {
+    const setting_favorites_t *defaults = &g_setting_defaults.favorites;
+    setting_favorites_t *fav = &g_setting.favorites;
+    bool hdzero_on = settings_get_bool(FAVORITES_INI_OLD_HDZERO, "enable", false);
+    bool analog_on = settings_get_bool(FAVORITES_INI_OLD_ANALOG, "enable", false);
+
+    settings_load_favorites_set(&fav->set[0], &defaults->set[0], FAVORITES_INI_OLD_HDZERO, BASE_CH_NUM);
+    for (int i = 0; i < FAVORITES_MAX; i++) {
+        uint8_t ch = fav->set[0].channel[i];
+        uint8_t band = (ch > 8) ? SETTING_SOURCES_HDZERO_BAND_RACEBAND : g_setting.source.hdzero_band;
+
+        fav->set[0].channel[i] = favorites_analog_channel(band, ch);
+    }
+
+    settings_load_favorites_set(&fav->set[1], &defaults->set[1], FAVORITES_INI_OLD_ANALOG, ANALOG_CHANNEL_NUM);
+    for (int s = 2; s < FAVORITES_SETS; s++)
+        fav->set[s] = defaults->set[s];
+    fav->active = hdzero_on ? 1 : (analog_on ? 2 : 0);
+
+    for (int s = 0; s < FAVORITES_SETS; s++) {
+        char section[24];
+
+        snprintf(section, sizeof(section), FAVORITES_INI_SET, s + 1);
+        ini_putl(section, "count", fav->set[s].count, SETTING_INI);
+        for (int i = 0; i < FAVORITES_MAX; i++) {
+            char key[8];
+
+            snprintf(key, sizeof(key), "ch%d", i + 1);
+            ini_putl(section, key, fav->set[s].channel[i], SETTING_INI);
+        }
+    }
+    // Last, so that a write cut short is redone on the next boot.
+    ini_putl(FAVORITES_INI_SETS, "active", fav->active, SETTING_INI);
+    LOGI("favorites: carried the old lists over, set %d in use", fav->active);
+}
+
+static void settings_load_favorites(void) {
+    setting_favorites_t *fav = &g_setting.favorites;
+    long active = ini_getl(FAVORITES_INI_SETS, "active", -1, SETTING_INI);
+
+    if (active < 0) {
+        settings_migrate_favorites();
+        return;
+    }
+
+    fav->active = (active <= FAVORITES_SETS) ? (uint8_t)active : 0;
+
+    for (int s = 0; s < FAVORITES_SETS; s++) {
+        char section[24];
+
+        snprintf(section, sizeof(section), FAVORITES_INI_SET, s + 1);
+        settings_load_favorites_set(&fav->set[s], &g_setting_defaults.favorites.set[s], section, ANALOG_CHANNEL_NUM);
     }
 }
 
@@ -580,13 +637,8 @@ void settings_load(void) {
         g_setting.source.analog_channel = g_setting_defaults.source.analog_channel;
     }
 
-    // favorites
-    // The HDZero list keeps the original [favorites] section so lists
-    // registered before analog support survive the upgrade.
-    settings_load_favorites(&g_setting.favorites.hdzero, &g_setting_defaults.favorites.hdzero,
-                            FAVORITES_INI_HDZERO, BASE_CH_NUM);
-    settings_load_favorites(&g_setting.favorites.analog, &g_setting_defaults.favorites.analog,
-                            FAVORITES_INI_ANALOG, ANALOG_CHANNEL_NUM);
+    // favorites, after the band: carrying the old HDZero list over needs it.
+    settings_load_favorites();
 
     // autoscan
     g_setting.autoscan.status = ini_getl("autoscan", "status", g_setting_defaults.autoscan.status, SETTING_INI);

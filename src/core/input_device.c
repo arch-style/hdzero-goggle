@@ -166,8 +166,8 @@ void tune_channel(uint8_t action) {
         return;
 
     // With favorites on, the dial cycles the registered channels only.
-    // favorites_active() picks the list matching the source we are tuning;
-    // any source that reaches here has one.
+    // favorites_active() reads the set in use the way the source we are
+    // tuning numbers its channels; any source that reaches here has one.
     bool use_favorites = favorites_active();
 
     switch (action) {
