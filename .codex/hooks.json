@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '/Users/yoshiyuki/LocalCodes/github/hdzero-goggle/.codex/hooks/guard-bash.py'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '/Users/yoshiyuki/LocalCodes/github/hdzero-goggle/.codex/hooks/memory-check.py'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '/Users/yoshiyuki/LocalCodes/github/hdzero-goggle/.codex/hooks/memory-check.py'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '/Users/yoshiyuki/LocalCodes/github/hdzero-goggle/.codex/hooks/memory-check.py'"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh '/Users/yoshiyuki/LocalCodes/github/hdzero-goggle/.codex/hooks/rules-reminder.sh'"
+          }
+        ]
+      }
+    ]
+  }
+}
