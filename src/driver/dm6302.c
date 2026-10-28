@@ -154,6 +154,27 @@ void SPI_Read(uint8_t page, uint16_t addr, uint32_t *dat0, uint32_t *dat1) {
 #endif
 }
 
+// The low byte of each chip's read-back, and nothing else. The efuse walk
+// wants one data byte and one ready bit per chip, and SPI_Read() spends six
+// of its eight I2C reads on bytes it then throws away: the bridge holds
+// chip 1 in 0x98..0x9b and chip 2 in 0x9c..0x9f, so two reads are enough.
+// Same SPI command, same registers, fewer bus transactions.
+static void SPI_Read_byte(uint8_t page, uint16_t addr, uint8_t *b0, uint8_t *b1) {
+    pthread_mutex_lock(&spi_mutex);
+
+    {
+        const uint8_t regs[3] = {0x91, 0x92, 0x90};
+        const uint8_t vals[3] = {addr & 0xFF, (page << 4) | (addr >> 8), 0x10};
+
+        spi_write_regs(regs, vals, 3);
+    }
+
+    *b0 = I2C_Read(ADDR_FPGA, 0x98);
+    *b1 = I2C_Read(ADDR_FPGA, 0x9c);
+
+    pthread_mutex_unlock(&spi_mutex);
+}
+
 void SPI_Write(uint8_t sel, uint8_t page, uint16_t addr, uint32_t dat) {
     uint32_t r1 = 0, r0 = 0;
 
@@ -1571,17 +1592,22 @@ void DM6302_EFUSE1(uint8_t SEL6302) {
 // SPI_Write with sel 0 addresses both, so the only thing the per-chip version
 // gained was reading one ready bit instead of two -- at the price of doing
 // the whole walk twice. Waits for both chips before taking the data.
+//
+// Only the low byte of each word is ever used (the ready bit and the data
+// byte), so the reads fetch only that byte of each chip.
 static void efuse_read_both(int macro, int j, uint32_t *d0, uint32_t *d1) {
-    uint32_t r0, r1;
+    uint8_t b0, b1;
 
     // EFUSE_CFG = (macro<<11) | (j<<4) | 0x1, to both chips
     SPI_Write(0, 0x3, 0x7D0, (macro << 11) | (j << 4) | 0x1);
 
     do {
-        SPI_Read(0x3, 0x7D4, &r0, &r1);
-    } while ((r0 & 1) || (r1 & 1));
+        SPI_Read_byte(0x3, 0x7D4, &b0, &b1);
+    } while ((b0 & 1) || (b1 & 1));
 
-    SPI_Read(0x3, 0x7D8, d0, d1);
+    SPI_Read_byte(0x3, 0x7D8, &b0, &b1);
+    *d0 = b0;
+    *d1 = b1;
 }
 
 // HDZ_EFUSE_CACHE=1 (card experiments): the efuse is programmed once at the
@@ -1879,9 +1905,13 @@ void DM6302_EFUSE2(uint8_t SEL6302) {
     }
 }
 
+// The measured offsets are logged per chip and path. They are what the
+// calibration produced on this boot, so a change to how the calibration is
+// run (both chips at once, say) can be checked against them.
 void DM6302_DCOC(uint8_t SEL6302) {
     uint32_t r0, r1, rdat_sel;
     uint32_t dat;
+    uint32_t dcoc_i = 0, dcoc_q = 0;
 
     //---------------- rx1_dcoc ----------------
     // write(0x201194, 0x1FFFF);         // clk enable
@@ -1933,6 +1963,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     dat = dat | rdat_sel;
     // write(0x200540, dat);
     SPI_Write(SEL6302, 0x3, 0x540, dat);
+    dcoc_i = dat;
 
     // write(0x20054C, 4);               // q path tia
     SPI_Write(SEL6302, 0x3, 0x54C, 0x00000004);
@@ -1968,6 +1999,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     dat = dat | rdat_sel;
     // write(0x200544, temp);
     SPI_Write(SEL6302, 0x3, 0x544, dat);
+    dcoc_q = dat;
 
     // write(0x20054C, 0);
     SPI_Write(SEL6302, 0x3, 0x54C, 0x00000000);
@@ -1975,6 +2007,8 @@ void DM6302_DCOC(uint8_t SEL6302) {
     SPI_Write(SEL6302, 0x3, 0x500, 0xF85FFC9);
     // write(0x200494, 0x66427C3);       // lna enable
     SPI_Write(SEL6302, 0x3, 0x494, 0x066727CC); // 0x66427C3
+
+    LOGI("DCOC %d: rx1 i=%08x q=%08x", SEL6302, dcoc_i, dcoc_q);
 
     WAIT(10);
 
@@ -2028,6 +2062,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     dat = dat | rdat_sel;
     // write(0x200640, dat);
     SPI_Write(SEL6302, 0x3, 0x640, dat);
+    dcoc_i = dat;
 
     // write(0x20064C, 4);               // q path tia
     SPI_Write(SEL6302, 0x3, 0x64C, 0x00000004);
@@ -2063,6 +2098,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     dat = dat | rdat_sel;
     // write(0x200644, temp);
     SPI_Write(SEL6302, 0x3, 0x644, dat);
+    dcoc_q = dat;
 
     // write(0x20064C, 0);
     SPI_Write(SEL6302, 0x3, 0x64C, 0x00000000);
@@ -2070,6 +2106,8 @@ void DM6302_DCOC(uint8_t SEL6302) {
     SPI_Write(SEL6302, 0x3, 0x600, 0xF85FFC9);
     // write(0x2004D4, 0x66427C3);       // lna enable
     SPI_Write(SEL6302, 0x3, 0x4D4, 0x066727CC); // 0x066427CC
+
+    LOGI("DCOC %d: rx2 i=%08x q=%08x", SEL6302, dcoc_i, dcoc_q);
 }
 
 // The init runs the main I2C bus faster for its duration. Stock wrote 0x08,
@@ -2082,6 +2120,8 @@ void DM6302_DCOC(uint8_t SEL6302) {
 //
 // Written under the bus lock so no transfer is in flight on it; with the
 // init on a worker the OLED and display set-up share that bus at the time.
+// Straight to sysfs, as reg_write() does elsewhere: through the aww script
+// each of the two writes was a shell and 8-21 ms with the bus held.
 #define TWI_CCR_1200K 0x08
 #define TWI_CCR_800K  0x10
 #define TWI_CCR_200K  0x58
@@ -2093,11 +2133,8 @@ static uint32_t tuner_bus_duty(void) {
 }
 
 static void dm6302_bus_write(uint32_t ccr) {
-    char cmd[48];
-
-    snprintf(cmd, sizeof(cmd), "aww 0x%08x 0x%08x", TWI2_CCR_ADDR, ccr);
     i2c_bus_lock(2);
-    system_exec(cmd);
+    reg_write(TWI2_CCR_ADDR, ccr);
     i2c_bus_unlock(2);
 }
 
@@ -2130,6 +2167,40 @@ static void dm6302_bus_normal(void) {
         return;
 
     dm6302_bus_write(TWI_CCR_200K | tuner_bus_duty());
+}
+
+// What the FPGA's SPI bridge can do over I2C beyond one register per
+// transaction is not documented, and the two ways to spend fewer transactions
+// on an SPI access both need an answer: an 8-byte block read of 0x98..0x9f
+// (one transaction instead of eight), and reading the staging registers
+// 0x91/0x92 back (which would make a multi-byte write testable without
+// issuing an SPI command). Reads only, once, after the init and after the bus
+// is back at its normal clock; nothing acts on the answers, the log does.
+static void spi_bridge_probe(void) {
+    uint8_t one[8], blk[8];
+    uint8_t s91, s92;
+
+    pthread_mutex_lock(&spi_mutex);
+
+    for (int i = 0; i < 8; i++)
+        one[i] = I2C_Read(ADDR_FPGA, 0x98 + i);
+
+    memset(blk, 0xAA, sizeof(blk));
+    i2c_read_n(2, ADDR_FPGA, 0x98, blk, 8);
+
+    // Left by the SPI_Read() just before: 0x91 = 0xF0, 0x92 = 0x6F. The
+    // command register 0x90 is left alone: what the bridge makes of a read
+    // of it is not known, and the two staging registers answer the question.
+    s91 = I2C_Read(ADDR_FPGA, 0x91);
+    s92 = I2C_Read(ADDR_FPGA, 0x92);
+
+    pthread_mutex_unlock(&spi_mutex);
+
+    LOGI("SPI bridge: one-by-one %02x %02x %02x %02x %02x %02x %02x %02x, block %02x %02x %02x %02x %02x %02x %02x %02x (%s)",
+         one[0], one[1], one[2], one[3], one[4], one[5], one[6], one[7],
+         blk[0], blk[1], blk[2], blk[3], blk[4], blk[5], blk[6], blk[7],
+         memcmp(one, blk, 8) == 0 ? "same" : "differ");
+    LOGI("SPI bridge: staging read back 0x91=%02x 0x92=%02x (written f0 6f)", s91, s92);
 }
 
 // DM6302 init
@@ -2248,6 +2319,8 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
     // Nothing acts on this.
     SPI_Read(0x6, 0xFF0, &r0, &r1);
     LOGI("DM6302 after init: 0x6/0xFF0 left=0x%x right=0x%x", r0, r1);
+
+    spi_bridge_probe();
 
     return 0;
 }
