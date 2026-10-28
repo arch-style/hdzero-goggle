@@ -1,6 +1,8 @@
 #include "system.h"
 
+#include <fcntl.h>
 #include <libgen.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,25 +20,76 @@ void log_thread_id(const char *name) {
     LOGI("thread: %s is %d", name, (int)syscall(SYS_gettid));
 }
 
+// The goggles' aww and awr are shell scripts around this sysfs class (the
+// kernel's drivers/char/dump_reg): aww is `echo addr val > write` and a
+// read-back, awr is `echo addr > dump; cat dump`. Run through system() that
+// is two shells and a cat, 8-21ms a write on goggle 2, and boot 161 had ten
+// of them between the tuner and the picture. Writing the same strings here
+// is the same kernel call without the shells.
+//
+// "dump" holds one address for the whole system and "write" one group, so
+// the app's own threads take turns. A script running awr or aww at the same
+// moment could still interleave, as it always could.
+#define SUNXI_DUMP "/sys/class/sunxi_dump/"
+
+static pthread_mutex_t reg_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static bool sysfs_puts(const char *path, const char *s) {
+    int fd = open(path, O_WRONLY);
+    if (fd < 0)
+        return false;
+
+    size_t len = strlen(s);
+    bool ok = write(fd, s, len) == (ssize_t)len;
+    close(fd);
+    return ok;
+}
+
 bool reg_read(uint32_t addr, uint32_t *value) {
-    char cmd[48];
-    uint32_t got_addr = 0, got_val = 0;
+    char buf[32];
+    uint32_t got = 0;
+    bool ok = false;
 
-    snprintf(cmd, sizeof(cmd), "awr 0x%08x 2>/dev/null", addr);
+    snprintf(buf, sizeof(buf), "0x%08x\n", addr);
 
-    FILE *fp = popen(cmd, "r");
-    if (!fp)
+    pthread_mutex_lock(&reg_lock);
+    if (sysfs_puts(SUNXI_DUMP "dump", buf)) {
+        int fd = open(SUNXI_DUMP "dump", O_RDONLY);
+        if (fd >= 0) {
+            // A single register comes back as "0x%08x\n".
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                ok = sscanf(buf, "0x%x", &got) == 1;
+            }
+        }
+    }
+    pthread_mutex_unlock(&reg_lock);
+
+    if (!ok) {
+        LOGE("reg read 0x%08x failed", addr);
         return false;
+    }
 
-    // awr prints "read 0x05070080:0x00000123"; gpadc.c parses the same line.
-    int n = fscanf(fp, "read 0x%x:0x%x", &got_addr, &got_val);
-    pclose(fp);
-
-    if (n != 2 || got_addr != addr)
-        return false;
-
-    *value = got_val;
+    *value = got;
     return true;
+}
+
+bool reg_write(uint32_t addr, uint32_t value) {
+    char buf[32];
+
+    snprintf(buf, sizeof(buf), "0x%08x 0x%08x\n", addr, value);
+
+    pthread_mutex_lock(&reg_lock);
+    bool ok = sysfs_puts(SUNXI_DUMP "write", buf);
+    pthread_mutex_unlock(&reg_lock);
+
+    if (ok)
+        LOGI("reg write 0x%08x 0x%08x", addr, value);
+    else
+        LOGE("reg write 0x%08x 0x%08x failed", addr, value);
+    return ok;
 }
 
 // Every one of these forks a shell. On this SoC that is not free, and the

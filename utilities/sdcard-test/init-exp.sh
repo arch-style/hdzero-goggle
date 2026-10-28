@@ -146,22 +146,36 @@ dispw_x() {
 }
 
 name=${1##*/}
+# 計画 A1 (2026-10-28): 1 なら、下の early_records (dmesg の写し、cpufreq、cmdline) を
+# 写しと dispw を始めた後に、裏で行う。boot 161 では S01app の終わり (2.52 秒) から
+# dispw の開始 (2.65 秒) までの大半がこの記録と stage の行だった。記録の中身は
+# 同じで、時刻が少し遅れるだけ。816 MHz の時間 (回の種類の見分け) は rcS v3 が
+# 先にクロックを固定しているので、遅らせても増えない見込み。0 なら今までどおり。
+RECORDS_AFTER_START=1
+C=/sys/devices/system/cpu/cpu0/cpufreq
 # 最初に呼ばれる時点 (S10udev、約 3 秒) の dmesg をカードに控える。カーネルと
 # 初期化の前半の内訳はここにしか残らない (後で押し出される)。数 ms。
 # 起動ごとの写しも boot-logs/early-stage<段階>.txt に残す (2026-10-17。それまでは
 # 毎回上書きで、最後の起動の分しか読めなかった)。
-if [ "$name" = S10udev ]; then
+early_records() {
 	dmesg > /mnt/extsd/dmesg-early.txt 2>/dev/null
-	mkdir -p /mnt/extsd/boot-logs 2>/dev/null
 	cp /mnt/extsd/dmesg-early.txt "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
-	t "stage $STAGE"
 	# CPU のクロックの履歴 (2026-10-17)。起動直後は 816 MHz で、約 2 秒ごとに
 	# 1 段ずつ上がり、1104 MHz に届くのは 8 秒ほど後だった。どのクロックで
 	# 何秒動いたか (単位 10 ms) を同じファイルに足す。rc-exp.sh も記録の終わりに足す。
-	C=/sys/devices/system/cpu/cpu0/cpufreq
 	{ echo "== cpufreq at S10udev $(cut -d' ' -f1 /proc/uptime)"
 	  echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"
 	  cat $C/stats/time_in_state; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	# カードから起動する試し (2026-10-20、docs/goggle2-card-boot.md): どのカーネルとどの引数で
+	# 起動したかを同じファイルに残す。カード起動なら cmdline に hdzcard=1 が入る。
+	{ echo "== cmdline $(cat /proc/cmdline)"; echo "== uname $(uname -a)"; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+}
+if [ "$name" = S10udev ]; then
+	mkdir -p /mnt/extsd/boot-logs 2>/dev/null
+	# 2026-10-28 から stage の行は記録の前 (S10udev に入った時刻)。それまでは
+	# dmesg の写しの後だった。
+	t "stage $STAGE"
+	[ "$RECORDS_AFTER_START" = 1 ] || early_records
 	# ここから最低クロックを最高に固定する。ondemand は負荷を 2 秒に 1 回しか
 	# 見ず (sampling_rate 2000000)、起動中は 816 MHz のまま待つ回が多い。段階
 	# 47-53 の比べ (偶数だけ固定) で映像が 0.3-0.5 秒早かったので、段階 54 から
@@ -187,14 +201,23 @@ if [ "$name" = S10udev ] && { [ "$STAGE" = 1 ] || [ "$STAGE" = 2 ]; }; then
 	  done
 	  sync ) &
 fi
-if [ "$EARLY_APPCOPY" = 1 ] && [ "$name" = S10udev ] && [ -f /mnt/extsd/HDZGOGGLE ]; then
+# 計画 1-2 (2026-10-20): rcS の写し v2 がカードの early-exp.sh を 1.6 秒ごろに呼び、
+# 同じ写しを先に始めていることがある。印 (/tmp/*.started) があれば始めない。
+if [ "$name" = S10udev ]; then
+	[ -e /tmp/libcopy.started ] && t "libcopy already started by early-exp"
+	[ -e /tmp/appcopy.started ] && t "appcopy already started by early-exp"
+	[ -e /tmp/dispw.started ] && t "dispw already started by early-exp"
+fi
+if [ "$EARLY_APPCOPY" = 1 ] && [ "$name" = S10udev ] && [ -f /mnt/extsd/HDZGOGGLE ] && [ ! -e /tmp/appcopy.started ]; then
+	: > /tmp/appcopy.started
 	( rm -f /tmp/HDZGOGGLE.staged.done
 	  if cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE.staged && chmod +x /tmp/HDZGOGGLE.staged; then
 		stat -c %s /mnt/extsd/HDZGOGGLE > /tmp/HDZGOGGLE.staged.done 2>/dev/null || ls -l /mnt/extsd/HDZGOGGLE | awk '{print $5}' > /tmp/HDZGOGGLE.staged.done
 		t "appcopy done"
 	  fi ) &
 fi
-if [ "$EARLY_LIBCOPY" = 1 ] && [ "$name" = S10udev ] && [ -d /mnt/extsd/g2lib ]; then
+if [ "$EARLY_LIBCOPY" = 1 ] && [ "$name" = S10udev ] && [ -d /mnt/extsd/g2lib ] && [ ! -e /tmp/libcopy.started ]; then
+	: > /tmp/libcopy.started
 	t "libcopy start"
 	( mkdir -p /tmp/lib
 	  cp /mnt/extsd/g2lib/*.so* /tmp/lib/ 2>/dev/null
@@ -210,7 +233,7 @@ if [ "$EARLY_PRELOAD" = 1 ] && [ "$name" = S10udev ] && [ -f /mnt/extsd/preload.
 	( while read -r f; do cat "$f" > /dev/null 2>&1; done < /mnt/extsd/preload.txt
 	  t "preload done" ) &
 fi
-if [ "$EARLY_DISPW" = 1 ] && [ "$name" = S10udev ]; then
+if [ "$EARLY_DISPW" = 1 ] && [ "$name" = S10udev ] && [ ! -e /tmp/dispw.started ]; then
 	: > /tmp/dispw.started
 	t "dispw start (early)"
 	( echo 0x0300B098 0x00775577 > /sys/class/sunxi_dump/write
@@ -220,6 +243,9 @@ if [ "$EARLY_DISPW" = 1 ] && [ "$name" = S10udev ]; then
 	  dispw -s vdpo 1080p50 > /dev/null 2>&1
 	  : > /tmp/dispw.done
 	  t "dispw done (early)" ) &
+fi
+if [ "$RECORDS_AFTER_START" = 1 ] && [ "$name" = S10udev ]; then
+	( early_records; t "early records written (in the background)" ) &
 fi
 # /dev の一覧を控える (段階 3 以降、最後に呼ばれる S41netparam の時点)。
 # udev の再生をやめたときに足りないリンクを、純正どおりの段階 5 と比べる。

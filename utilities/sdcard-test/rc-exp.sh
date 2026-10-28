@@ -54,6 +54,22 @@ APP_BEFORE_I2C=1
 # C1 (全部待たせる) の HDZero の起動: 関門 7.60 秒で受信チップの初期化が始まり
 # 8.95 秒まで 1.33 秒、映像は電源から 10.8 秒。C2 (2026-10-16): port 1 だけ
 APP_I2C_GATED_PORTS="1"
+# 受信チップのバス (port 2) の関門 (uptime 秒。0 = 待たない)。計画 1-2 以降で
+# アプリの起動が早まっても、受信チップに触る時刻を今までと同じに保つための安全柵。
+# port 2 を 3.5 秒ごろから使って問題なかったのは boot 44、153、154、155 で確認済み
+# (アプリ main が 3.46〜3.64 秒、初期化はその 0.08 秒後)。それより早い時刻は
+# 未検証なので、計画 1-4 で 1 段ずつ下げて確かめる (efuse の指紋が一致し、
+# "no response" が無いこと)。2026-10-20。
+# 計画 1-4 の 1 段目 (2026-10-28): 3.3 秒。boot 240〜252 (段階 264〜276) の 13 回で
+# 指紋が一致し "no response" 無し。速い側の 5 回は port 2 を 3.30〜3.39 秒に開き
+# (3.5 のときは 14 回とも 3.50)、映像 5.68〜5.85 s (3.5 のときは 5.86〜5.92 s)。
+# 記録は logs/goggle2/2026-10-28-port2-3.3/。
+# 2 段目 (2026-10-28): 3.1 秒。G と A2 の後、速い側の回は 3.3 で 19 ms と 146 ms
+# 待っていた (boot 259、260)。boot 262〜272 (段階 286〜296) の 11 回で指紋が一致し
+# "no response" 無し、11 回とも送信機の信号を受けた。速い側の 5 回は関門の時点が
+# 3.17〜3.24 秒で待ちは 0、映像 5.55〜5.64 s。受信チップを 3.18 秒より前に使った回は
+# まだ無い。記録は logs/goggle2/2026-10-28-port2-3.1/。
+PORT2_NOT_BEFORE=3.1
 
 # 実験の段階 (init-exp.sh が stage.txt から決めて /tmp/exp-stage に書く)。
 # 1: udevd だけ + アプリの I2C は全 port を関門まで待たせる。2: udevd だけ +
@@ -94,7 +110,7 @@ LOG=/mnt/extsd/rc-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG" 2>/dev/null
 }
-echo "--- boot $BOOTN stage=$STAGE FAST=$FAST_LAUNCH LIBCOPY=$LIBCOPY DEFER_PORT1=$DEFER_PORT1 OSD_FIRST=$OSD_BEFORE_TUNER EFUSE_CACHE=$EFUSE_CACHE SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS" >> "$LOG" 2>/dev/null
+echo "--- boot $BOOTN stage=$STAGE FAST=$FAST_LAUNCH LIBCOPY=$LIBCOPY DEFER_PORT1=$DEFER_PORT1 OSD_FIRST=$OSD_BEFORE_TUNER EFUSE_CACHE=$EFUSE_CACHE SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS PORT2=$PORT2_NOT_BEFORE" >> "$LOG" 2>/dev/null
 t "rc-exp start"
 
 function insmod_all()
@@ -346,9 +362,22 @@ if [ "$APP_BEFORE_I2C" = 1 ]; then
 	for p in $APP_I2C_GATED_PORTS; do
 		export HDZ_I2C${p}_NOT_BEFORE=$I2C_NOT_BEFORE
 	done
+	if [ "$PORT2_NOT_BEFORE" != 0 ]; then
+		export HDZ_I2C2_NOT_BEFORE=$PORT2_NOT_BEFORE
+	fi
+	# アプリは起動時に /mnt/UDISK/setting.ini を見る (settings.c)。rc_mount が
+	# 裏に回る版の rcS (計画 1-5) に備え、UDISK がマウント済みなのを確かめてから
+	# 起動する。今の rcS では常にマウント済みで、待ちは 0。
+	i=0
+	while ! grep -qs ' /mnt/UDISK ' /proc/mounts && [ $i -lt 40 ]; do usleep 50000; i=$((i + 1)); done
+	if grep -qs ' /mnt/UDISK ' /proc/mounts; then
+		t "UDISK mounted (waited $((i * 50))ms)"
+	else
+		t "UDISK not mounted after 2 s, launching anyway"
+	fi
 	[ -f /mnt/extsd/app-sampler.sh ] && /bin/sh /mnt/extsd/app-sampler.sh &
 	start_app
-	t "app launched (before I2C; ports $APP_I2C_GATED_PORTS not before $I2C_NOT_BEFORE)"
+	t "app launched (before I2C; ports $APP_I2C_GATED_PORTS not before $I2C_NOT_BEFORE; port 2 not before $PORT2_NOT_BEFORE)"
 fi
 
 # 早すぎる I2C を避ける (I2C_NOT_BEFORE を参照)。
@@ -434,12 +463,24 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 	  # カードを使うほど重くなる処理の計測 (fill-probe.sh があれば、2026-10-18)。
 	  # fsck.fat -n を含むので数秒かかる。ビープはその後。
 	  [ -f /mnt/extsd/fill-probe.sh ] && /bin/sh /mnt/extsd/fill-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
+	  # 上書き領域の rcS の写し (v3) を入れ直す (goggle2-install-rcs.sh があれば、2026-10-20 夜)。
+	  # 一度だけ書き、効くのは次の起動から。結果は goggle2-install-rcs/result.txt。
+	  [ -f /mnt/extsd/goggle2-install-rcs.sh ] && /bin/sh /mnt/extsd/goggle2-install-rcs.sh g2 > /dev/null 2>&1
+	  # カーネルとブートローダの情報を読む (kernel-probe.sh があれば、2026-10-19)。読むだけ。
+	  [ -f /mnt/extsd/kernel-probe.sh ] && /bin/sh /mnt/extsd/kernel-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
+	  # initcall_debug を一度だけ入れて測り、戻す (env-initcall/ があれば、2026-10-19)。
+	  [ -f /mnt/extsd/env-initcall.sh ] && /bin/sh /mnt/extsd/env-initcall.sh > /dev/null 2>&1
+	  # カードのカーネルを試す起動手順と、その段の進行 (env-bootcmd/ があれば、2026-10-19)。
+	  [ -f /mnt/extsd/env-bootcmd.sh ] && /bin/sh /mnt/extsd/env-bootcmd.sh > /dev/null 2>&1
 	  C=/sys/devices/system/cpu/cpu0/cpufreq
 	  { echo "== cpufreq at records $(cut -d' ' -f1 /proc/uptime)"
 	    echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"
 	    cat $C/stats/time_in_state; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
 	  # init-exp.sh が起動中だけ最高に固定した最低クロックを、元に戻す。
 	  cat $C/cpuinfo_min_freq > $C/scaling_min_freq 2>/dev/null
+	  # カードから起動する作ったカーネル (hdzlike7 以降) は起動時の governor が performance。
+	  # 記録を書いた後は純正と同じ ondemand に戻す (純正カーネルでは ondemand のまま何もしない)。
+	  [ "$(cat $C/scaling_governor 2>/dev/null)" = performance ] && echo ondemand > $C/scaling_governor 2>/dev/null
 	  sync; t "records written (boot $BOOTN)"; sync; beep_short 1 ) &
 fi
 

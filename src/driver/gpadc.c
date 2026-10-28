@@ -13,27 +13,15 @@
 #include "util/system.h"
 
 void gpadc_init() {
-    char buf[128];
-
     // open gpadc clock
-    sprintf(buf, "aww 0x030019ec 0x00010001");
-    system_exec(buf);
+    reg_write(0x030019ec, 0x00010001);
 
     // open adc channel 0
-    sprintf(buf, "aww 0x05070008 0x00000001");
-    system_exec(buf);
+    reg_write(0x05070008, 0x00000001);
 }
 
 void gpadc_on(uint8_t is_on) {
-    char buf[128];
-
-    if (is_on) {
-        sprintf(buf, "aww 0x05070004 0xffbd0000");
-    } else {
-        sprintf(buf, "aww 0x05070004 0xffbc0000");
-    }
-
-    system_exec(buf);
+    reg_write(0x05070004, is_on ? 0xffbd0000 : 0xffbc0000);
 }
 
 int gpdac0_get() {

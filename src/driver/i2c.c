@@ -178,26 +178,24 @@ bool g_twi2_ccr_has_duty = false;
 
 // Nothing has touched the bus yet, so read the clock register the kernel set
 // up, flip bit 7, read it back, and put the original back: a bit that sticks
-// exists. Two register reads and two writes through awr/aww, a few tens of
-// ms, once. This is the first fact about the bus that comes from the goggles
-// rather than from another SoC's manual.
+// exists. Two register reads and two writes through sysfs, once (39ms on
+// boot 161 while they still went through awr/aww). This is the first fact
+// about the bus that comes from the goggles rather than from another SoC's
+// manual.
 static void twi2_probe(void) {
     uint32_t def, back;
-    char cmd[48];
 
     if (!reg_read(TWI2_CCR_ADDR, &def)) {
-        LOGE("i2c: TWI2 CCR could not be read (no awr?)");
+        LOGE("i2c: TWI2 CCR could not be read");
         return;
     }
 
     g_twi2_ccr_default = def;
 
-    snprintf(cmd, sizeof(cmd), "aww 0x%08x 0x%08x", TWI2_CCR_ADDR, def ^ TWI_CCR_DUTY40);
-    system(cmd);
+    reg_write(TWI2_CCR_ADDR, def ^ TWI_CCR_DUTY40);
     if (reg_read(TWI2_CCR_ADDR, &back))
         g_twi2_ccr_has_duty = ((back ^ def) & TWI_CCR_DUTY40) != 0;
-    snprintf(cmd, sizeof(cmd), "aww 0x%08x 0x%08x", TWI2_CCR_ADDR, def);
-    system(cmd);
+    reg_write(TWI2_CCR_ADDR, def);
 
     unsigned n = def & 7, m = (def >> 3) & 0xF;
     LOGI("i2c: TWI2 CCR as the kernel left it 0x%02x = %ukHz (N=%u M=%u), duty bit %s%s",

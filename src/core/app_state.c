@@ -388,7 +388,7 @@ void app_switch_to_hdzero(bool is_default) {
     rtc6715.init(0, 0);
     LOGI("switch mark: to_hdzero start");
 
-    system_exec("aww 0x0300b084 0x00001555"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
+    reg_write(0x0300b084, 0x00001555); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
 
     // After the clock drive strength, which used to run before dispw and now
     // has no reason not to, and before the tuner, so the two run together

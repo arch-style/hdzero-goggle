@@ -545,14 +545,12 @@ DCLK_DLY_NUM[5:0]
 void vdpo_sync_ctrl_set(bool dclk_invert, bool dclk_dly_en, uint8_t dvlk_dly_num) {
     const uint32_t addr = 0x06542008;
     uint32_t dat = 0x00000003;
-    char buf[32];
 
     dat |= (dclk_invert << 3);
     dat |= (dvlk_dly_num << 4);
     dat |= (dclk_dly_en << 10);
 
-    snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    reg_write(addr, dat);
 }
 
 /*
@@ -564,19 +562,15 @@ default value : 9
 void csic_pclk_dly_set(uint8_t pclk_dly_num) {
     const uint32_t addr = 0x06601500;
     uint32_t dat = pclk_dly_num;
-    char buf[32];
 
-    snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    reg_write(addr, dat);
 }
 
 void csic_pclk_invert_set(uint8_t is_invert) {
     const uint32_t addr = 0x06601004;
     uint32_t dat = is_invert ? 0x010000A0 : 0x010100A0;
-    char buf[32];
 
-    snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    reg_write(addr, dat);
 }
 
 void pclk_phase_set(video_source_t source) {
@@ -702,7 +696,7 @@ void Display_UI_init() {
     // are undocumented.
     if (!skip_timing)
         vdpo_set_timing(VDPO_TMG_1080P50, "1080p50");
-    system_exec("aww 0x0300b340 0x00000008");
+    reg_write(0x0300b340, 0x00000008);
     Display_VO_SWITCH(0);
 
     vclk_phase_set(VIDEO_SOURCE_MENU_UI, 0);
@@ -711,9 +705,9 @@ void Display_UI_init() {
     I2C_Write(ADDR_FPGA, 0x84, 0x11);
 
     screen.vtmg(0);
-    system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
+    reg_write(0x0300b084, 0x00003fff); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
     I2C_Write(ADDR_FPGA, 0xa7, 0x00);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
 }
 
 void Display_UI_then(void (*before_on)(void)) {
@@ -774,7 +768,7 @@ void Display_Playback(int lines) {
     } else {
         vdpo_set_timing(VDPO_TMG_720P60, "720p60");
     }
-    system_exec("aww 0x0300b340 0x00000008");
+    reg_write(0x0300b340, 0x00000008);
 
     const video_source_t phases = hd ? VIDEO_SOURCE_HDZERO_IN_1080P30 : VIDEO_SOURCE_HDZERO_IN_720P60_50;
     vclk_phase_set(phases, 0);
@@ -789,11 +783,11 @@ void Display_Playback(int lines) {
         screen.mfpga.set720p60(VR_720P60, 0);
         screen.vtmg(1);
     }
-    system_exec("aww 0x0300b084 0x00003fff");
+    reg_write(0x0300b084, 0x00003fff);
     I2C_Write(ADDR_FPGA, 0xa7, hd ? 0x00 : 0x11);
     I2C_Write(ADDR_FPGA, 0x8C, 0x01);
     Display_VO_SWITCH(1);
-    system_exec("aww 0x06542018 0x00000044");
+    reg_write(0x06542018, 0x00000044);
 
     // The panel stays dark: the player lights it (hw_screen_on()) once MPP is
     // up. MPP puts the UI layer back to 1920x1080 as it starts, and on the
@@ -835,7 +829,7 @@ void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
 }
 
 void Display_720P90_t(int mode) {
@@ -857,7 +851,7 @@ void Display_720P90_t(int mode) {
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
 }
 
 void Display_1080P30_t(int mode) {
@@ -880,7 +874,7 @@ void Display_1080P30_t(int mode) {
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
 }
 
 void Display_1080P24_t(int mode) {
@@ -906,7 +900,7 @@ void Display_1080P24_t(int mode) {
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
 }
 
 void Display_720P60_50(int mode, uint8_t is_43) {
@@ -1006,7 +1000,7 @@ void AV_Mode_Switch_fpga(int is_pal) {
         I2C_Write(ADDR_FPGA, 0x80, 0x00);
     }
     I2C_Write(ADDR_FPGA, 0x06, 0x0F);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
     // 9.5.1 ended here with the OSD clock as AV has it, which an NTSC/PAL
     // change (AV_Mode_Switch(), with no pclk_phase_set() after it) relies on.
     if (fpga_old_clocks())

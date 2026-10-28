@@ -34,7 +34,7 @@ void self_test() {
     // and the 9.5.1 fork booted for weeks without any dispw before the video.
     if (!g_setting.speed.boot_display)
         system_exec("dispw -s vdpo 1080p50");
-    system_exec("aww 0x0300b340 0x00000008");
+    reg_write(0x0300b340, 0x00000008);
 #endif
 
     if (!g_setting.storage.selftest)
