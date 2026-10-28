@@ -283,9 +283,17 @@ static lv_obj_t *page_input_create(lv_obj_t *parent, panel_arr_t *arr) {
     pageItems[BACK_BTN] = create_label_item(content, buf, 1, BACK_BTN, 1);
 
     lv_obj_t *label = lv_label_create(content);
+#if defined(HDZGOGGLE2)
+    // Analog here is whichever the Source page's Analog Module picks, the
+    // built-in receiver by default, not only the module.
+    snprintf(buf, sizeof(buf), "*%s\n%s",
+             _lang("Settings apply to video mode only"),
+             _lang("'Toggle source' will switch between HDZero and Analog"));
+#else
     snprintf(buf, sizeof(buf), "*%s\n%s",
              _lang("Settings apply to video mode only"),
              _lang("'Toggle source' will switch between HDZero and Expansion module"));
+#endif
     lv_label_set_text(label, buf);
     lv_obj_set_style_text_font(label, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
