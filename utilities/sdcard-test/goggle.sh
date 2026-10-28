@@ -37,17 +37,26 @@ HERE=$(cd "$(dirname "$0")/../.." && pwd)
 BUILD=$HERE/build_goggle2/out/HDZGOGGLE
 
 # expect で ssh/scp のパスワード入力を済ませる。引数はそのまま spawn へ。
+# expect に -c で渡すと、この Mac の expect (5.45) では $argv が定義されず
+# "can't read argv" で止まった (2026-10-19)。スクリプトを一時ファイルに書いて
+# -f で渡すと argv が入る。
 with_pw() {
-	PW="$PW" expect -c '
+	local f
+	f=$(mktemp /tmp/goggle-expect.XXXXXX) || return 1
+	cat > "$f" <<-'EOF'
 		set timeout -1
-		spawn {*}$argv
+		spawn -noecho {*}$argv
 		expect {
 			-re "(?i)password:" { send "$env(PW)\r"; exp_continue }
 			eof
 		}
 		lassign [wait] pid spawnid os_error status
 		exit $status
-	' -- "$@"
+	EOF
+	PW="$PW" expect -f "$f" -- "$@"
+	local rc=$?
+	rm -f "$f"
+	return $rc
 }
 
 gssh() { with_pw ssh $SSH_OPTS "root@$IP" "$@"; }
