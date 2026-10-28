@@ -1,0 +1,169 @@
+#!/bin/sh
+
+# fork (2026-10-17): 起動を速くするための写し。上書き領域に置き、読み出し専用の
+# 純正の rcS (md5 a98ac80e) の代わりに使う。足したのは次の 2 つだけ。
+# 1. 起動中だけ CPU の最低クロックを最高 (1104 MHz) に固定する。ondemand は負荷を
+#    2 秒に 1 回しか見ず、起動の初めを 816 MHz のまま過ごす回が多かった。15 秒後に
+#    元の最低クロックへ戻すので、カードが無くても普段の動作は純正と同じになる。
+# 2. 各段の区切りを dmesg に残す (bootmark)。
+# 元に戻すときは /overlay/upperdir/etc/init.d/rcS を消す。/etc/init.d/rcS を
+# 消すと純正の rcS まで隠れて起動しなくなるので、消さない。
+CPUF=/sys/devices/system/cpu/cpu0/cpufreq
+if [ -w $CPUF/scaling_min_freq ]; then
+	cat $CPUF/scaling_max_freq > $CPUF/scaling_min_freq 2>/dev/null
+	( sleep 15; cat $CPUF/cpuinfo_min_freq > $CPUF/scaling_min_freq ) > /dev/null 2>&1 &
+fi
+bootmark() {
+	[ -c /dev/kmsg ] && echo "bootmark: $*" > /dev/kmsg 2>/dev/null
+	return 0
+}
+bootmark "rcS start, cpu $(cat $CPUF/scaling_cur_freq 2>/dev/null)"
+# fork (2026-10-20、v2): カードを先にマウントし、カードの early-exp.sh を裏で呼ぶ。
+# カードから /tmp への写しを S10udev (2.6 秒ごろ) より 1 秒早く始めるため。
+# 純正の S01app は vfat が既にマウントされていれば何もしない (S01app の 57-59 行)。
+# 区画がまだ見えない、マウントできない、カードに early-exp.sh が無い、のどれでも
+# 何もせず、純正どおり S01app に任せる。マウントの形は S01app と同じ (オプション無し)。
+# max_sectors_kb も S01app と同じ値を先に入れる (写しの読み出しのため)。
+if [ -b /dev/mmcblk0p1 ] && [ -d /mnt/extsd ] && ! grep -qs ' /mnt/extsd ' /proc/mounts; then
+	if /bin/mount -t vfat /dev/mmcblk0p1 /mnt/extsd 2>/dev/null; then
+		echo 4096 > /sys/block/mmcblk0/queue/max_sectors_kb 2>/dev/null
+		bootmark "extsd mounted early"
+		if [ -f /mnt/extsd/early-exp.sh ]; then
+			/bin/sh /mnt/extsd/early-exp.sh > /dev/null 2>&1 &
+		fi
+	else
+		bootmark "extsd early mount failed"
+	fi
+fi
+
+#mkfs_jffs2() <device in /dev/by-name>
+mkfs_jffs2() {
+	! [ -x /usr/sbin/mkfs.jffs2 ] \
+		&& ! [ -x /sbin/mkfs.jffs2 ] \
+		&& echo "Not Found /usr/sbin/mkfs.jffs2 or /sbin/mkfs.jffs2" \
+		&& return 1
+
+	# format to jffs2
+	local erase_block=$(/bin/cat /proc/mtd \
+		| /bin/grep "$(basename $1)" \
+		| /usr/bin/awk '{print $3}')
+	/bin/mkdir -p /tmp/jffs2.dir/tmp
+	mkfs.jffs2 -p -e 0x${erase_block} -d /tmp/jffs2.dir \
+		-o /tmp/jffs2.img >/dev/null || return 1
+	/bin/dd if=/tmp/jffs2.img of=$1 || return 1
+	/bin/rm -rf /tmp/jffs2.img /tmp/jffs2.dir
+	return 0
+}
+
+rc_preboot()
+{
+	[ -f /etc/init.d/rc.preboot ] \
+		&& source /etc/init.d/rc.preboot
+}
+
+rc_init()
+{
+	## set loglevel
+	local level=$(sed 's#.*loglevel=\([0-8]\).*#\1#' /proc/cmdline)
+	[ -n "${level}" ] && echo ${level} > /proc/sys/kernel/printk
+
+	# hostname
+	#[ -z "$HOSTNAME" -o "$HOSTNAME" == "(none)" ] && HOSTNAME=TinaLinux
+	#/bin/hostname $HOSTNAME
+	ifconfig lo up
+}
+
+rc_log()
+{
+	[ -f /etc/init.d/rc.log ] \
+		&& source /etc/init.d/rc.log
+}
+
+rc_mount_filesystem()
+{
+	local fs_src="$1"
+	local fs_mntpt="$2"
+	# mount filesystem
+	if [ -e "$fs_src" -a -d "$fs_mntpt" ]; then
+		[ -L "$fs_src" ] && fs_src=$(readlink "$fs_src")
+		case "$fs_src" in
+			/dev/mtdblock*)
+				mount -t jffs2 "$fs_src" "$fs_mntpt" 2>/dev/null
+				if [ "$?" -ne "0" ]; then
+					mkfs_jffs2 "$fs_src"
+					mount -t jffs2 "$fs_src" "$fs_mntpt" 2>/dev/null
+				fi
+				;;
+			*)
+				/usr/sbin/fsck.ext4 -y "$fs_src" &>/dev/null
+				mount -t ext4 "$fs_src" "$fs_mntpt" 2>/dev/null
+				if [ "$?" -ne "0" ]; then
+					mkfs.ext4 -m 0 "$fs_src" >/dev/null
+					mount -t ext4 "$fs_src" "$fs_mntpt" 2>/dev/null
+				fi
+				;;
+		esac
+
+		# restore /mnt file contexts
+		if [ -f /sbin/restorecon ]; then
+			/sbin/restorecon -R /mnt
+		fi
+	fi
+}
+
+rc_mount()
+{
+	rc_mount_filesystem "/dev/by-name/UDISK" "/mnt/UDISK"
+# 	rc_mount_filesystem "/dev/by-name/user-res" "/mnt/user"
+
+	# enable hotplug
+	echo /sbin/mdev > /proc/sys/kernel/hotplug
+	/sbin/mdev -s
+}
+
+rc_load_modules()
+{
+	[ -f /etc/init.d/rc.modules ] \
+		&& source /etc/init.d/rc.modules
+}
+
+rc_load_script()
+{
+	[ -f /etc/init.d/load_script.conf ] && \
+	for script in $(awk '{print}' /etc/init.d/load_script.conf); do
+		[ -f "/etc/init.d/$script" ] || continue
+		grep '#!/bin/sh /etc/rc.common' /etc/init.d/$script >/dev/null || continue;
+		/etc/init.d/$script "boot" >/dev/null &
+	done
+
+}
+
+rc_ota()
+{
+	[ -f /sbin/aw_upgrade_log.sh ] && /sbin/aw_upgrade_log.sh &
+}
+
+rc_final()
+{
+	[ -f /etc/init.d/rc.final ] \
+		&& source /etc/init.d/rc.final
+}
+
+bootmark "rc_preboot"
+rc_preboot > /dev/null 2>&1
+bootmark "rc_init"
+rc_init > /dev/null 2>&1
+bootmark "rc_log"
+rc_log > /dev/null 2>&1
+bootmark "rc_mount"
+rc_mount > /dev/null 2>&1
+bootmark "rc_load_modules"
+rc_load_modules > /dev/null 2>&1
+bootmark "rc_load_script"
+rc_load_script > /dev/null 2>&1
+bootmark "rc_final"
+rc_final > /dev/null 2>&1
+#the ota should be last
+bootmark "rc_ota"
+rc_ota > /dev/null 2>&1
+
