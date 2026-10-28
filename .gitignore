@@ -26,3 +26,6 @@ result-*
 
 # ゴーグルから回収した生ログ。残すものは docs/logs/ に選んで置く。
 /logs
+
+# Python byte-code left by the report scripts.
+__pycache__/
