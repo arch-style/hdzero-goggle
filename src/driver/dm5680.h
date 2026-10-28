@@ -56,6 +56,9 @@ void DM5680_get_vtxinfo(uint8_t sel, uint8_t *payload);
 
 void DM5680_req_vldflg();
 void DM5680_clear_vldflg();
+// Start-up only: poll the valid flag from the first tune and log when each
+// receiver's link comes up. Later calls do nothing.
+void DM5680_link_watch_start(void);
 void DM5680_get_vldflg(uint8_t sel, uint8_t *payload);
 void DM5680_get_regval(uint8_t sel, uint8_t *payload);
 

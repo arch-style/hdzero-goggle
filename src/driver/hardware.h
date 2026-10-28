@@ -102,6 +102,12 @@ bool HDZero_open_pending(void);
 // main thread that shares the I2C bus with it and cannot run at the 1MHz the
 // init sets; see the comment on the definition.
 void HDZero_open_async_wait(void);
+// True, once, when the async open has already tuned this band and channel
+// (card flag /mnt/extsd/early-tune); the caller then skips its own tune.
+bool HDZero_take_early_tune(uint8_t band, uint8_t ch);
+// True, once, when the async open has already sent this camera mode to the
+// baseband (card flag /mnt/extsd/early-fps); the caller then skips SetFPS.
+bool HDZero_take_early_fps(int mode);
 
 void Source_HDMI_in();
 // How many times HDMI in has been set up for a detected timing (goggle 2).

@@ -17,8 +17,10 @@
 
 #include <log/log.h>
 
+#include "../core/msp_displayport.h"
 #include "../core/settings.h"
 #include "../util/system.h"
+#include "../util/time.h"
 #include "dm5680.h"
 #include "dm6302.h"
 #include "screen.h"
@@ -178,6 +180,66 @@ static __thread bool hdz_in_worker = false;
 // ten seconds of nothing. Cleared again as soon as an open gets anywhere.
 static bool hdz_async_init_failed = false;
 
+// /mnt/extsd/early-tune (card experiments): tune the boot channel here, as
+// soon as the receivers are up, instead of at the switch some 100 ms later.
+// On video the received picture follows the panel lighting by about a
+// quarter of a second, and if that is the link coming up after the tune, it
+// can come up while the main thread is still building the UI. The switch
+// then skips its own DM6302_SetChannel(): that rewrites the PLL and restarts
+// its calibration (0x118 strobes), which would throw the head start away.
+#define EARLY_TUNE_FLAG "/mnt/extsd/early-tune"
+static int hdz_early_tuned = -1; // (band << 8) | ch, or -1
+
+static void hdz_early_tune(void) {
+    if (access(EARLY_TUNE_FLAG, F_OK) != 0 || !g_hw_stat.hdzero_open)
+        return;
+
+    uint8_t band = g_setting.source.hdzero_band;
+    uint8_t ch = (g_setting.scan.channel - 1) & 0x7f;
+    uint32_t t0 = time_ms();
+
+    DM6302_SetChannel(band, ch);
+    DM5680_clear_vldflg();
+    DM5680_req_vldflg();
+    hdz_early_tuned = (band << 8) | ch;
+    LOGI("HDZero: early tune band %u ch %u in the worker (%ums)", band, ch, time_ms() - t0);
+    DM5680_link_watch_start();
+}
+
+// /mnt/extsd/early-fps (card experiments): send the camera mode to the
+// baseband (DM5680_SetFPS) here too, from the card's note of the last VTX
+// (cam-mode.txt), instead of only in Display_720P60_50_t() at the switch.
+// Boots 282-283 had the link valid 21-22 ms after the tune, before the panel
+// lit, and OSD packets flowing right after it, yet the picture came about
+// 0.27 s after the panel: the wait is after the link. If it is the baseband
+// settling into the mode it was just given, giving it the mode early moves
+// that wait off the path. The switch skips its own SetFPS for the same mode.
+#define EARLY_FPS_FLAG "/mnt/extsd/early-fps"
+static int hdz_early_fps = -1;
+
+static void hdz_early_fps_send(void) {
+    if (access(EARLY_FPS_FLAG, F_OK) != 0 || !g_hw_stat.hdzero_open)
+        return;
+
+    DM5680_SetFPS(CAM_MODE);
+    hdz_early_fps = CAM_MODE;
+    LOGI("HDZero: early SetFPS %d in the worker", (int)CAM_MODE);
+}
+
+bool HDZero_take_early_fps(int mode) {
+    bool hit = hdz_early_fps == mode;
+
+    hdz_early_fps = -1;
+    return hit;
+}
+
+bool HDZero_take_early_tune(uint8_t band, uint8_t ch) {
+    bool hit = hdz_early_tuned == ((band << 8) | ch);
+
+    hdz_early_tuned = -1;
+    return hit;
+}
+
 static void *hdz_async_worker(void *arg) {
     (void)arg;
 
@@ -190,6 +252,8 @@ static void *hdz_async_worker(void *arg) {
     setpriority(PRIO_PROCESS, syscall(SYS_gettid), 10);
 
     HDZero_open(hdz_async_bw);
+    hdz_early_tune();
+    hdz_early_fps_send();
 
     return NULL;
 }
@@ -293,6 +357,8 @@ void HDZero_open(int bw) {
 
 void HDZero_Close() {
     hdz_async_collect();
+    hdz_early_tuned = -1;
+    hdz_early_fps = -1;
 
     DM5680_SetBB(0);
     DM5680_ResetRF(0);

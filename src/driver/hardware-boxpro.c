@@ -1072,6 +1072,8 @@ void vdpo_start_timing_async(vdpo_tmg_t tmg, const char *mode) {
 }
 bool HDZero_open_pending(void) { return false; }
 void HDZero_open_async_wait(void) {}
+bool HDZero_take_early_tune(uint8_t band, uint8_t ch) { return false; }
+bool HDZero_take_early_fps(int mode) { return false; }
 void HDZero_open_async_start(int bw) { HDZero_open(bw); }
 void HDZero_Standby() { HDZero_Close(); }
 

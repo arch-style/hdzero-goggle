@@ -142,7 +142,14 @@ void uart_parse(uint8_t sel, uint8_t *state, uint8_t *len, uint8_t *payload, uin
             DM5680_get_vtxinfo(sel, ptr);
             break;
 
-        case 0x15:      // osd_data....... crc
+        case 0x15: // osd_data....... crc
+        {
+            static bool first_osd_logged = false;
+            if (!first_osd_logged) {
+                first_osd_logged = true;
+                LOGI("link: first osd packet (%s) at %ums", sel ? "left" : "right", time_ms() - g_boot_start_ms);
+            }
+        }
             if (!sel) { // Update OSD from UART1 only sel: 1=from left, 0= from right
                 DM5680_OSD_parse(&ptr[2], ptr[0] - 1);
                 g_osd_update_cnt = 0;
@@ -486,9 +493,56 @@ void DM5680_clear_vldflg() {
     rx_status[1].rx_valid = 0;
 }
 
+// The first moment each receiver reports a valid link, and the first OSD
+// packet, as milliseconds on the same clock as "boot: picture at". The panel
+// is lit at the switch, and on video the received picture follows it by about
+// a quarter of a second; these say whether that quarter second is the link
+// coming up. Logged once per session each, nothing acts on them.
+static bool link_valid_logged[2];
+static uint32_t link_watch_start_ms;
+
 void DM5680_get_vldflg(uint8_t sel, uint8_t *payload) {
     rx_status_t *rx_status_ptr = sel ? &rx_status[1] : &rx_status[0];
     rx_status_ptr->rx_valid = payload[2];
+
+    if (payload[2] && !link_valid_logged[sel]) {
+        link_valid_logged[sel] = true;
+        uint32_t now = time_ms();
+        LOGI("link: %s valid at %ums (%ums after the tune)", sel ? "left" : "right",
+             now - g_boot_start_ms, link_watch_start_ms ? now - link_watch_start_ms : 0);
+    }
+}
+
+// At start-up nothing asks the receivers for their valid flag between the
+// tune and the peripheral thread's first round, about a second later. This
+// asks every 20 ms from the first tune for up to 1.5 s, so the marks above
+// land within 20 ms of the link coming up. Once per session.
+static void *link_watch(void *arg) {
+    (void)arg;
+    log_thread_id("link watch");
+
+    while (time_ms() - link_watch_start_ms < 1500) {
+        if (link_valid_logged[0] && link_valid_logged[1])
+            break;
+        DM5680_req_vldflg();
+        usleep(20000);
+    }
+    LOGI("link: watch ended %ums after the tune, valid right %d left %d",
+         time_ms() - link_watch_start_ms, link_valid_logged[0], link_valid_logged[1]);
+    return NULL;
+}
+
+void DM5680_link_watch_start(void) {
+    static bool started = false;
+    pthread_t tid;
+
+    if (started)
+        return;
+    started = true;
+    link_watch_start_ms = time_ms();
+    LOGI("link: tuned at %ums, watching", link_watch_start_ms - g_boot_start_ms);
+    if (pthread_create(&tid, NULL, link_watch, NULL) == 0)
+        pthread_detach(tid);
 }
 
 void DM5680_get_regval(uint8_t sel, uint8_t *payload) {

@@ -814,7 +814,10 @@ void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 
     I2C_Write(ADDR_FPGA, 0x80, (mode == VR_540P60) ? 0x01 : 0x00);
 
-    DM5680_SetFPS(mode);
+    if (HDZero_take_early_fps(mode))
+        LOGI("switch: camera mode %d already sent to the baseband", mode);
+    else
+        DM5680_SetFPS(mode);
     if (mode == VR_540P60) {
         screen.mfpga.set540p60();
     } else {

@@ -412,11 +412,16 @@ void app_switch_to_hdzero(bool is_default) {
     ch &= 0x7f;
 
     LOGI("switch to bw:%d, band:%d, ch:%d, CAM_MODE=%d 4:3=%d", g_setting.source.hdzero_bw, g_setting.source.hdzero_band, g_setting.scan.channel, CAM_MODE, cam_4_3);
-    DM6302_SetChannel(g_setting.source.hdzero_band, ch);
+    if (g_init_done == 0 && HDZero_take_early_tune(g_setting.source.hdzero_band, ch))
+        LOGI("switch: channel already tuned by the tuner worker");
+    else
+        DM6302_SetChannel(g_setting.source.hdzero_band, ch);
     DM5680_clear_vldflg();
     DM5680_req_vldflg();
     progress_bar.start = 0;
     LOGI("switch mark: channel tuned");
+    if (g_init_done == 0)
+        DM5680_link_watch_start();
 
     // The audio and recorder set-up below is half a second of forked
     // scripts that has nothing to do with the display, so it is free as long
