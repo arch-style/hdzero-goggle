@@ -353,6 +353,11 @@ int main(int argc, char *argv[]) {
     settings_init();
     settings_load();
 #ifdef HDZGOGGLE2
+    // The camera mode the first display is built for, from the card's note
+    // of what the VTX reported last time (hardware-goggle2.c).
+    cam_mode_cache_load();
+#endif
+#ifdef HDZGOGGLE2
     {
         const char *e = getenv("HDZ_DEFER_PORT1");
         defer_port1 = e && e[0] == '1';

@@ -927,11 +927,69 @@ void Display_1080P30(int mode) {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
+// The display is built at the boot switch for CAM_MODE's initial value,
+// 720p60, because the VTX's config packet that names the real camera mode
+// only arrives once the link is up. With a 540p60 camera every boot then
+// showed the 720p60 picture for about 1.1 s, went dark for about 0.4 s while
+// HDZERO_detect() rebuilt the display, and came back (boots 236-275 in the
+// log, and on video). /mnt/extsd/cam-mode.txt, when the card has it, holds
+// what the last VTX reported ("<mode> <cam_4_3>"): the display is built for
+// that from the start, and the detect then finds nothing to change. A
+// different VTX is handled as before, and the file is rewritten with what it
+// reported. Only the modes on the Display_720P60_50_t() path are taken from
+// the file; the others change the vdpo timing as well, and starting in one of
+// those has not been tried from here.
+#define CAM_MODE_CACHE_FILE "/mnt/extsd/cam-mode.txt"
+
+static video_resolution_t cam_mode_last = VR_720P60;
+static uint8_t cam_4_3_last = 0;
+static bool cam_mode_cache_on = false;
+
+static bool cam_mode_on_720p60_path(int mode) {
+    return mode == VR_720P50 || mode == VR_720P60 || mode == VR_960x720P60 || mode == VR_540P60;
+}
+
+void cam_mode_cache_load(void) {
+    FILE *fp = fopen(CAM_MODE_CACHE_FILE, "r");
+    int mode = -1, ratio = -1;
+
+    if (!fp)
+        return;
+
+    int n = fscanf(fp, "%d %d", &mode, &ratio);
+    fclose(fp);
+    cam_mode_cache_on = true;
+
+    if (n != 2 || !cam_mode_on_720p60_path(mode) || (ratio != 0 && ratio != 1)) {
+        LOGI("cam mode: cache not usable (%d fields, mode %d, ratio %d), starting in 720p60", n, mode, ratio);
+        return;
+    }
+
+    CAM_MODE = mode;
+    cam_4_3 = ratio;
+    cam_mode_last = mode;
+    cam_4_3_last = ratio;
+    LOGI("cam mode: cache says %d (%s), the display starts in it", mode, ratio ? "16:9" : "4:3");
+}
+
+static void cam_mode_cache_store(void) {
+    if (!cam_mode_cache_on)
+        return;
+
+    FILE *fp = fopen(CAM_MODE_CACHE_FILE, "w");
+    if (!fp) {
+        LOGE("cam mode: cannot write the cache");
+        return;
+    }
+    fprintf(fp, "%d %d\n", CAM_MODE, cam_4_3);
+    fclose(fp);
+    LOGI("cam mode: cache written %d %d", CAM_MODE, cam_4_3);
+}
+
 int HDZERO_detect() // return = 1: vtmg to V536 changed
 {
-    static video_resolution_t cam_mode_last = VR_720P60;
-    static uint8_t cam_4_3_last = 0;
     int ret = 0;
+    bool cache_stale = false;
 
     pthread_mutex_lock(&hardware_mutex);
 
@@ -973,12 +1031,14 @@ int HDZERO_detect() // return = 1: vtmg to V536 changed
             dvr_update_vi_conf(CAM_MODE);
             dvr_stop_live();
             cam_mode_last = CAM_MODE;
+            cache_stale = true;
             ret = 1;
         }
 
         if (cam_4_3_last != cam_4_3) {
             LOGI("cam_4_3: %d  CAM_MODE=%d", cam_4_3, CAM_MODE);
             cam_4_3_last = cam_4_3;
+            cache_stale = true;
 
             if (CAM_MODE != VR_720P50) {
                 screen.mfpga.set_ratio(cam_4_3); // set ratio for 720P60/90/1080P30
@@ -988,6 +1048,10 @@ int HDZERO_detect() // return = 1: vtmg to V536 changed
         }
     }
     pthread_mutex_unlock(&hardware_mutex);
+
+    if (cache_stale)
+        cam_mode_cache_store();
+
     return ret;
 }
 

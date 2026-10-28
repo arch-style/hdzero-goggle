@@ -160,6 +160,10 @@ void Set_HT_dat(uint16_t ch0, uint16_t ch1, uint16_t ch2);
 void Analog_Module_Power(bool Force);
 
 int HDZERO_detect();
+#ifdef HDZGOGGLE2
+// Reads /mnt/extsd/cam-mode.txt, if the card has one, before the boot switch.
+void cam_mode_cache_load(void);
+#endif
 int AV_in_detect();
 int HDMI_in_detect();
 
