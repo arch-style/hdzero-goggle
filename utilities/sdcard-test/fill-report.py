@@ -43,7 +43,7 @@ def fat_times(path):
 
 def main():
     sd = sys.argv[1] if len(sys.argv) > 1 else '/Volumes/HDZERO_BOOT'
-    logs = os.path.join(sd, 'boot-logs')
+    logs = os.path.join(sd, 'fork-deletable', 'boot-logs')
     stages = sorted(int(m.group(1)) for n in os.listdir(logs)
                     if (m := re.fullmatch(r'fill-stage(\d+)\.txt', n)))
     if not stages:

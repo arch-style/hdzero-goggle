@@ -1617,7 +1617,7 @@ static void efuse_read_both(int macro, int j, uint32_t *d0, uint32_t *d1) {
 // used as the key; when they match the card's cache, macros 2.. come from the
 // cache and the walk is skipped. Any mismatch, short file or bad hash means a
 // normal read, which then rewrites the cache.
-#define EFUSE_CACHE_FILE "/mnt/extsd/efuse-cache.bin"
+#define EFUSE_CACHE_FILE "/mnt/extsd/fork-system/efuse-cache.bin"
 #define EFUSE_CACHE_MAGIC 0x46455a48u // 'HZEF'
 #define EFUSE_CACHE_KEY 32
 

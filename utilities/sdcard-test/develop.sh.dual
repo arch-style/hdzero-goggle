@@ -2,9 +2,9 @@
 # 1 枚のカードで Goggle 2 (自分の) と借り物の Goggle v1 を起動し分ける。
 # SD カードに develop.sh という名前でコピーして使う。フラッシュには何も書かない。
 #
-#   Goggle 2 -> /mnt/extsd/develop.g2.sh をそのまま実行する (それまでの
+#   Goggle 2 -> $SYS/develop.g2.sh をそのまま実行する (それまでの
 #               develop.sh を改名したもの。中身は触らない)
-#   Goggle v1 -> /mnt/extsd/HDZGOGGLE.v1 (build_goggle のビルド) を RAM (/tmp) に
+#   Goggle v1 -> $SYS/HDZGOGGLE.v1 (build_goggle のビルド) を RAM (/tmp) に
 #               コピーして起動する。無ければ純正。起動しなければ 8 秒後に純正。
 #               v1 に入っているのが 9.5.0 でも 9.6 でもよい (アプリが FPGA の版を
 #               見て合わせる)。
@@ -21,12 +21,18 @@
 # 最初の版は小文字の goggle2 しか見ておらず、9.5.1 系の Goggle 2 を v1 と
 # 取り違えるところだった。見分けた結果は model-history.txt に残す。
 # v1 側はバイナリの名前も分けてある (HDZGOGGLE は Goggle 2 用のまま)。
+# カードの整理 (2026-10-29): 動かすのに要るものは fork-system/、消してよいもの
+# (ログ、古い版) は fork-deletable/。カード直下に残すのは純正のもの
+# (DCIM, FIRMWARE, FSCK, log, HDZG_*.bin などの決まった名前) と、フラッシュの
+# 入口が名前で呼ぶ rc-exp.sh, init-exp.sh, early-exp.sh, develop.sh だけ。
+SYS=/mnt/extsd/fork-system
+DEL=/mnt/extsd/fork-deletable
 
 # 起動の内訳 (カーネル → init → rc.sh → ここ) を取る。入った時点の経過秒を
 # 渡し、採取そのものは裏で走らせてアプリの起動を遅らせない。boot-trace.sh が
 # カードに無ければ何もしない。結果は boot-trace/NNN/、読むのは boot-trace-report.py。
 ENTRY_UPTIME=$(cut -d' ' -f1 /proc/uptime)
-[ -e /mnt/extsd/boot-trace.sh ] && /bin/sh /mnt/extsd/boot-trace.sh "$ENTRY_UPTIME" &
+[ -e $SYS/boot-trace.sh ] && /bin/sh $SYS/boot-trace.sh "$ENTRY_UPTIME" &
 
 STOCK=/mnt/app/app/HDZGOGGLE
 PLATFORM=$(cat /mnt/app/platform 2>/dev/null)
@@ -54,28 +60,28 @@ if [ "$(cat /tmp/exp-stage 2>/dev/null | tr -dc 0-9)" -ge 17 ] 2>/dev/null; then
 fi
 export SYNC_BG
 if [ "$SYNC_BG" = 1 ]; then
-	( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) > /dev/null 2>&1 &
+	( echo "platform=[$PLATFORM] model=$MODEL" >> $DEL/model-history.txt && sync ) > /dev/null 2>&1 &
 else
-	( echo "platform=[$PLATFORM] model=$MODEL" >> /mnt/extsd/model-history.txt && sync ) 2>/dev/null
+	( echo "platform=[$PLATFORM] model=$MODEL" >> $DEL/model-history.txt && sync ) 2>/dev/null
 fi
 
 if [ "$MODEL" = g2 ]; then
 	# 設定とフラッシュ全体の控え (緊急更新の前に取るもの)。読むだけ。初回だけ
 	# 数十秒かかり、その間は映像が出ない。2 回目からは setting.ini を写すだけ。
 	# goggle2-backup.sh がカードに無ければ何もしない。
-	[ -e /mnt/extsd/goggle2-backup.sh ] && /bin/sh /mnt/extsd/goggle2-backup.sh g2
+	[ -e $SYS/goggle2-backup.sh ] && /bin/sh $SYS/goggle2-backup.sh g2
 	# 緊急更新で初期値に戻った setting.ini を、カードの控えで一度だけ書き戻す。
 	# 無ければ何もしない。控えを取った後に呼ぶので、書き戻す前の設定も残る。
-	[ -e /mnt/extsd/goggle2-restore-setting.sh ] && /bin/sh /mnt/extsd/goggle2-restore-setting.sh g2
+	[ -e $SYS/goggle2-restore-setting.sh ] && /bin/sh $SYS/goggle2-restore-setting.sh g2
 	# PhoenixCard や緊急更新で消えた、起動時間の実験用の入口 2 つ (rc.sh と
 	# rc.final) を一度だけ入れ直す。無ければ何もしない。理由と手順は
 	# goggle2-install-hooks.sh。フラッシュに書く唯一の控え系スクリプト。
-	[ -e /mnt/extsd/goggle2-install-hooks.sh ] && /bin/sh /mnt/extsd/goggle2-install-hooks.sh g2
+	[ -e $SYS/goggle2-install-hooks.sh ] && /bin/sh $SYS/goggle2-install-hooks.sh g2
 	# Wi-Fi で Mac から SSH で入れるように、ゴーグルの方から Mac へ ping を出す。
 	# 理由は wifi-hello.sh。宛先は wifi-hello.txt。無ければ何もしない。
-	[ -e /mnt/extsd/wifi-hello.sh ] && /bin/sh /mnt/extsd/wifi-hello.sh > /dev/null 2>&1 &
-	if [ -e /mnt/extsd/develop.g2.sh ]; then
-		exec /bin/sh /mnt/extsd/develop.g2.sh
+	[ -e $SYS/wifi-hello.sh ] && /bin/sh $SYS/wifi-hello.sh > /dev/null 2>&1 &
+	if [ -e $SYS/develop.g2.sh ]; then
+		exec /bin/sh $SYS/develop.g2.sh
 	fi
 	"$STOCK" &
 	exit 0
@@ -90,7 +96,8 @@ fi
 
 # カードが書けるかを最初に確かめる。書けないカードでログへのリダイレクトが
 # 失敗すると、シェルはそのコマンド (アプリの起動) を実行しない。
-LOG=/mnt/extsd/HDZGOGGLE.log
+mkdir -p $DEL 2>/dev/null
+LOG=$DEL/HDZGOGGLE.log
 WRITABLE=0
 if ( : > /mnt/extsd/.wtest ) 2>/dev/null; then
 	rm -f /mnt/extsd/.wtest
@@ -101,12 +108,12 @@ fi
 # 到達しなかった印。この後の "> $LOG" が消すので、先に名前を変えて残す。
 save_unrotated_log() {
 	[ -s "$LOG" ] || return 0
-	mkdir -p /mnt/extsd/boot-logs
+	mkdir -p $DEL/boot-logs
 	n=1
-	while [ -e "/mnt/extsd/boot-logs/HDZGOGGLE.unrotated.$n.log" ]; do
+	while [ -e "$DEL/boot-logs/HDZGOGGLE.unrotated.$n.log" ]; do
 		n=$((n + 1))
 	done
-	mv "$LOG" "/mnt/extsd/boot-logs/HDZGOGGLE.unrotated.$n.log"
+	mv "$LOG" "$DEL/boot-logs/HDZGOGGLE.unrotated.$n.log"
 }
 
 start_app() {
@@ -141,7 +148,7 @@ fallback_if_dead() {
 
 # 返却前に書き戻すための、借りた時点の setting.ini。すでにあれば (Mac の
 # 控えから入れたものを含めて) 触らない。
-B=/mnt/extsd/goggle-backup
+B=$SYS/goggle-backup
 
 if [ "$WRITABLE" = "1" ]; then
 	save_unrotated_log
@@ -166,9 +173,9 @@ fi
 # 読みに行ったところで SIGBUS で落ちる (Goggle 2 で 2026-09-30 に実際に起きた。
 # develop.sh.vopatch を参照)。RAM (/tmp は tmpfs) にコピーしてそこから実行する。
 # コピーに失敗したらカードから。
-if [ -e /mnt/extsd/HDZGOGGLE.v1 ]; then
-	APP=/mnt/extsd/HDZGOGGLE.v1
-	if cp /mnt/extsd/HDZGOGGLE.v1 /tmp/HDZGOGGLE && chmod +x /tmp/HDZGOGGLE; then
+if [ -e $SYS/HDZGOGGLE.v1 ]; then
+	APP=$SYS/HDZGOGGLE.v1
+	if cp $SYS/HDZGOGGLE.v1 /tmp/HDZGOGGLE && chmod +x /tmp/HDZGOGGLE; then
 		APP=/tmp/HDZGOGGLE
 	fi
 else

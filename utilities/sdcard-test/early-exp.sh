@@ -12,6 +12,12 @@
 # 作るものと同じで、rc-exp.sh がそれを待つ。
 #
 # 消せば今までどおり。カードに書くのは init-exp.log への行だけ。
+# カードの整理 (2026-10-29): 動かすのに要るものは fork-system/、消してよいもの
+# (ログ、古い版) は fork-deletable/。カード直下に残すのは純正のもの
+# (DCIM, FIRMWARE, FSCK, log, HDZG_*.bin などの決まった名前) と、フラッシュの
+# 入口が名前で呼ぶ rc-exp.sh, init-exp.sh, early-exp.sh, develop.sh だけ。
+SYS=/mnt/extsd/fork-system
+DEL=/mnt/extsd/fork-deletable
 
 # 画面の設定 (disp.ko の insmod と 1080p50) もここで始めるか (計画 1-3)。
 # 1.6 秒ごろに画面を触るのは未検証なので、既定は 0 (init-exp.sh が S10udev で行う)。
@@ -19,31 +25,32 @@
 # (modinfo)。dispw -s は debugfs に書くだけで /mnt/app も S00mpp のモジュールも使わない。
 EARLY_DISPW_AT_RCS=1
 
-LOG=/mnt/extsd/init-exp.log
+mkdir -p $DEL 2>/dev/null
+LOG=$DEL/init-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) early: $*" >> "$LOG" 2>/dev/null
 }
 t "start"
 
 # 共有ライブラリ 47 本 (g2lib/) を /tmp/lib へ。init-exp.sh の EARLY_LIBCOPY と同じ。
-if [ -d /mnt/extsd/g2lib ] && [ ! -e /tmp/libcopy.started ]; then
+if [ -d $SYS/g2lib ] && [ ! -e /tmp/libcopy.started ]; then
 	: > /tmp/libcopy.started
 	( mkdir -p /tmp/lib
-	  cp /mnt/extsd/g2lib/*.so* /tmp/lib/ 2>/dev/null
+	  cp $SYS/g2lib/*.so* /tmp/lib/ 2>/dev/null
 	  # FAT にはシンボリックリンクが置けないので、soname の名前はここで作る。
 	  while read -r link target; do
 		[ -n "$link" ] && [ -f "/tmp/lib/$target" ] && ln -sf "$target" "/tmp/lib/$link"
-	  done < /mnt/extsd/g2lib/links.txt
+	  done < $SYS/g2lib/links.txt
 	  : > /tmp/lib.done
 	  t "libcopy done ($(ls /tmp/lib | wc -l) files)" ) &
 fi
 
 # fork 本体を /tmp/HDZGOGGLE.staged へ。init-exp.sh の EARLY_APPCOPY と同じ。
-if [ -f /mnt/extsd/HDZGOGGLE ] && [ ! -e /tmp/appcopy.started ]; then
+if [ -f $SYS/HDZGOGGLE ] && [ ! -e /tmp/appcopy.started ]; then
 	: > /tmp/appcopy.started
 	( rm -f /tmp/HDZGOGGLE.staged.done
-	  if cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE.staged && chmod +x /tmp/HDZGOGGLE.staged; then
-		ls -l /mnt/extsd/HDZGOGGLE | awk '{print $5}' > /tmp/HDZGOGGLE.staged.done
+	  if cp $SYS/HDZGOGGLE /tmp/HDZGOGGLE.staged && chmod +x /tmp/HDZGOGGLE.staged; then
+		ls -l $SYS/HDZGOGGLE | awk '{print $5}' > /tmp/HDZGOGGLE.staged.done
 		t "appcopy done"
 	  fi ) &
 fi
@@ -55,9 +62,9 @@ if [ "$EARLY_DISPW_AT_RCS" = 1 ] && [ ! -e /tmp/dispw.started ]; then
 	( echo 0x0300B098 0x00775577 > /sys/class/sunxi_dump/write
 	  echo 0x0300B0D8 0x22777777 > /sys/class/sunxi_dump/write
 	  echo 0x0300B0fc 0x35517751 > /sys/class/sunxi_dump/write
-	  if [ -f /mnt/extsd/ko/disp.ko ]; then
+	  if [ -f $SYS/ko/disp.ko ]; then
 		aww 0x07000160 0x083f10b7
-		if insmod /mnt/extsd/ko/disp.ko; then
+		if insmod $SYS/ko/disp.ko; then
 			t "disp.ko from card"
 		else
 			insmod /mnt/app/ko/disp.ko
@@ -68,7 +75,7 @@ if [ "$EARLY_DISPW_AT_RCS" = 1 ] && [ ! -e /tmp/dispw.started ]; then
 		# ここ (boot 158 で 2.08 秒、161 で 1.89 秒) ではまだ無いことがある。カードの ko/ に純正の
 		# vdpo.ko (2026-10-15 のバックアップの app/ko/vdpo.ko、md5 6eebb1df) を
 		# 置き、そちらを先に使う (計画 A2、2026-10-28)。
-		if [ -f /mnt/extsd/ko/vdpo.ko ] && insmod /mnt/extsd/ko/vdpo.ko; then
+		if [ -f $SYS/ko/vdpo.ko ] && insmod $SYS/ko/vdpo.ko; then
 			t "vdpo.ko from card"
 		else
 			insmod /mnt/app/ko/vdpo.ko

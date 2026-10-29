@@ -568,6 +568,7 @@ static void app_log_rotate(void) {
     char path[160];
     unsigned next;
 
+    mkdir(FORK_DELETABLE_DIR, 0777);
     mkdir(APP_LOG_DIR, 0777);
 
     next = app_log_newest() + 1;

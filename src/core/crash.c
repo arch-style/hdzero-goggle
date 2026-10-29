@@ -17,7 +17,7 @@
 
 #include <log/log.h>
 
-#define CRASH_LOG "/mnt/extsd/crash.log"
+#define CRASH_LOG "/mnt/extsd/fork-deletable/crash.log"
 
 static void put(int fd, const char *s) {
     write(fd, s, strlen(s));

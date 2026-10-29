@@ -17,8 +17,14 @@
 # オフにしたままなら ping は送らない。何も書かない。
 # このゴーグルの busybox の ping は引数を取らず、1 回だけ送って返事を 5 秒まで
 # 待つ。
+# カードの整理 (2026-10-29): 動かすのに要るものは fork-system/、消してよいもの
+# (ログ、古い版) は fork-deletable/。カード直下に残すのは純正のもの
+# (DCIM, FIRMWARE, FSCK, log, HDZG_*.bin などの決まった名前) と、フラッシュの
+# 入口が名前で呼ぶ rc-exp.sh, init-exp.sh, early-exp.sh, develop.sh だけ。
+SYS=/mnt/extsd/fork-system
+DEL=/mnt/extsd/fork-deletable
 
-F=/mnt/extsd/wifi-hello.txt
+F=$SYS/wifi-hello.txt
 [ -f "$F" ] || exit 0
 TARGETS=$(tr -d ' \r' < "$F" | grep -v '^$' | grep -v '^sweep$')
 SWEEP=$(tr -d ' \r' < "$F" | grep -c '^sweep$')

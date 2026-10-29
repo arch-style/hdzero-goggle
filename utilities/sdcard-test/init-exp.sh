@@ -11,6 +11,12 @@
 # S00mpp、S00part、S01app はカードのマウント前なので、ここには来ない。
 # 消すかカードを抜けば純正どおり。各 S スクリプトの開始と終了の経過秒を
 # カードの init-exp.log に書く。
+# カードの整理 (2026-10-29): 動かすのに要るものは fork-system/、消してよいもの
+# (ログ、古い版) は fork-deletable/。カード直下に残すのは純正のもの
+# (DCIM, FIRMWARE, FSCK, log, HDZG_*.bin などの決まった名前) と、フラッシュの
+# 入口が名前で呼ぶ rc-exp.sh, init-exp.sh, early-exp.sh, develop.sh だけ。
+SYS=/mnt/extsd/fork-system
+DEL=/mnt/extsd/fork-deletable
 
 # --- 実験の設定 (S スクリプトの名前ごとに run / bg / skip) ---
 #   run   ここで前と同じに走らせ、時間を測る (純正と同じ動き)
@@ -77,10 +83,10 @@
 # char/ で、どれも使っていない。
 STAGE=0
 if [ "${1##*/}" = S10udev ]; then
-	n=$(tr -dc 0-9 < /mnt/extsd/stage.txt 2>/dev/null)
+	n=$(tr -dc 0-9 < $SYS/stage.txt 2>/dev/null)
 	if [ -n "$n" ]; then
 		STAGE=$n
-		echo $((n + 1)) > /mnt/extsd/stage.txt
+		echo $((n + 1)) > $SYS/stage.txt
 		echo "$STAGE" > /tmp/exp-stage
 	fi
 else
@@ -98,7 +104,8 @@ mode_for() {
 	esac
 }
 
-LOG=/mnt/extsd/init-exp.log
+mkdir -p $DEL 2>/dev/null
+LOG=$DEL/init-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG" 2>/dev/null
 }
@@ -130,9 +137,9 @@ EARLY_DISPW=1
 # dispw -x の代わり (rc-exp.sh の dispw_x と同じ)。カードの ko/disp.ko (1 秒待ちを
 # 100 ms にした写し) があればそれを insmod し、無ければ純正の dispw -x。
 dispw_x() {
-	if [ -f /mnt/extsd/ko/disp.ko ]; then
+	if [ -f $SYS/ko/disp.ko ]; then
 		aww 0x07000160 0x083f10b7
-		if insmod /mnt/extsd/ko/disp.ko; then
+		if insmod $SYS/ko/disp.ko; then
 			t "disp.ko from card"
 		else
 			insmod /mnt/app/ko/disp.ko
@@ -158,20 +165,20 @@ C=/sys/devices/system/cpu/cpu0/cpufreq
 # 起動ごとの写しも boot-logs/early-stage<段階>.txt に残す (2026-10-17。それまでは
 # 毎回上書きで、最後の起動の分しか読めなかった)。
 early_records() {
-	dmesg > /mnt/extsd/dmesg-early.txt 2>/dev/null
-	cp /mnt/extsd/dmesg-early.txt "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	dmesg > $DEL/dmesg-early.txt 2>/dev/null
+	cp $DEL/dmesg-early.txt "$DEL/boot-logs/early-stage$STAGE.txt" 2>/dev/null
 	# CPU のクロックの履歴 (2026-10-17)。起動直後は 816 MHz で、約 2 秒ごとに
 	# 1 段ずつ上がり、1104 MHz に届くのは 8 秒ほど後だった。どのクロックで
 	# 何秒動いたか (単位 10 ms) を同じファイルに足す。rc-exp.sh も記録の終わりに足す。
 	{ echo "== cpufreq at S10udev $(cut -d' ' -f1 /proc/uptime)"
 	  echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"
-	  cat $C/stats/time_in_state; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	  cat $C/stats/time_in_state; } >> "$DEL/boot-logs/early-stage$STAGE.txt" 2>/dev/null
 	# カードから起動する試し (2026-10-20、docs/goggle2-card-boot.md): どのカーネルとどの引数で
 	# 起動したかを同じファイルに残す。カード起動なら cmdline に hdzcard=1 が入る。
-	{ echo "== cmdline $(cat /proc/cmdline)"; echo "== uname $(uname -a)"; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	{ echo "== cmdline $(cat /proc/cmdline)"; echo "== uname $(uname -a)"; } >> "$DEL/boot-logs/early-stage$STAGE.txt" 2>/dev/null
 }
 if [ "$name" = S10udev ]; then
-	mkdir -p /mnt/extsd/boot-logs 2>/dev/null
+	mkdir -p $DEL/boot-logs 2>/dev/null
 	# 2026-10-28 から stage の行は記録の前 (S10udev に入った時刻)。それまでは
 	# dmesg の写しの後だった。
 	t "stage $STAGE"
@@ -191,7 +198,7 @@ fi
 # port 2 = twi2 = PH9/PH10 (PH_DATA 0x0300B10C の bit9/10)。関門 (7.6 秒) より
 # 前に線が低いままなら、部品側がバスを握っている。
 if [ "$name" = S10udev ] && { [ "$STAGE" = 1 ] || [ "$STAGE" = 2 ]; }; then
-	( P=/mnt/extsd/pins.log
+	( P=$DEL/pins.log
 	  echo "--- boot stage $STAGE: uptime PE_DATA PH_DATA" >> "$P"
 	  while :; do
 		u=$(cut -d' ' -f1 /proc/uptime)
@@ -208,29 +215,29 @@ if [ "$name" = S10udev ]; then
 	[ -e /tmp/appcopy.started ] && t "appcopy already started by early-exp"
 	[ -e /tmp/dispw.started ] && t "dispw already started by early-exp"
 fi
-if [ "$EARLY_APPCOPY" = 1 ] && [ "$name" = S10udev ] && [ -f /mnt/extsd/HDZGOGGLE ] && [ ! -e /tmp/appcopy.started ]; then
+if [ "$EARLY_APPCOPY" = 1 ] && [ "$name" = S10udev ] && [ -f $SYS/HDZGOGGLE ] && [ ! -e /tmp/appcopy.started ]; then
 	: > /tmp/appcopy.started
 	( rm -f /tmp/HDZGOGGLE.staged.done
-	  if cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE.staged && chmod +x /tmp/HDZGOGGLE.staged; then
-		stat -c %s /mnt/extsd/HDZGOGGLE > /tmp/HDZGOGGLE.staged.done 2>/dev/null || ls -l /mnt/extsd/HDZGOGGLE | awk '{print $5}' > /tmp/HDZGOGGLE.staged.done
+	  if cp $SYS/HDZGOGGLE /tmp/HDZGOGGLE.staged && chmod +x /tmp/HDZGOGGLE.staged; then
+		stat -c %s $SYS/HDZGOGGLE > /tmp/HDZGOGGLE.staged.done 2>/dev/null || ls -l $SYS/HDZGOGGLE | awk '{print $5}' > /tmp/HDZGOGGLE.staged.done
 		t "appcopy done"
 	  fi ) &
 fi
-if [ "$EARLY_LIBCOPY" = 1 ] && [ "$name" = S10udev ] && [ -d /mnt/extsd/g2lib ] && [ ! -e /tmp/libcopy.started ]; then
+if [ "$EARLY_LIBCOPY" = 1 ] && [ "$name" = S10udev ] && [ -d $SYS/g2lib ] && [ ! -e /tmp/libcopy.started ]; then
 	: > /tmp/libcopy.started
 	t "libcopy start"
 	( mkdir -p /tmp/lib
-	  cp /mnt/extsd/g2lib/*.so* /tmp/lib/ 2>/dev/null
+	  cp $SYS/g2lib/*.so* /tmp/lib/ 2>/dev/null
 	  # FAT にはシンボリックリンクが置けないので、soname の名前はここで作る。
 	  while read -r link target; do
 		[ -n "$link" ] && [ -f "/tmp/lib/$target" ] && ln -sf "$target" "/tmp/lib/$link"
-	  done < /mnt/extsd/g2lib/links.txt
+	  done < $SYS/g2lib/links.txt
 	  : > /tmp/lib.done
 	  t "libcopy done ($(ls /tmp/lib | wc -l) files)" ) &
 fi
-if [ "$EARLY_PRELOAD" = 1 ] && [ "$name" = S10udev ] && [ -f /mnt/extsd/preload.txt ]; then
+if [ "$EARLY_PRELOAD" = 1 ] && [ "$name" = S10udev ] && [ -f $SYS/preload.txt ]; then
 	t "preload start"
-	( while read -r f; do cat "$f" > /dev/null 2>&1; done < /mnt/extsd/preload.txt
+	( while read -r f; do cat "$f" > /dev/null 2>&1; done < $SYS/preload.txt
 	  t "preload done" ) &
 fi
 if [ "$EARLY_DISPW" = 1 ] && [ "$name" = S10udev ] && [ ! -e /tmp/dispw.started ]; then
@@ -250,7 +257,7 @@ fi
 # /dev の一覧を控える (段階 3 以降、最後に呼ばれる S41netparam の時点)。
 # udev の再生をやめたときに足りないリンクを、純正どおりの段階 5 と比べる。
 if [ "$name" = S41netparam ] && [ "$STAGE" -ge 3 ] 2>/dev/null; then
-	ls -laR /dev > "/mnt/extsd/dev-stage$STAGE.txt" 2>/dev/null
+	mkdir -p $DEL/dev-stage 2>/dev/null; ls -laR /dev > "$DEL/dev-stage/dev-stage$STAGE.txt" 2>/dev/null
 fi
 mode=$(mode_for "$name")
 case "$mode" in

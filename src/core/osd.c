@@ -1352,17 +1352,23 @@ static bool osd_font_prefetch_wait(void) {
 }
 
 void load_fc_osd_font(uint8_t fhd) {
-    char fp[3][256];
+    char fp[5][256];
     int i;
 
+    // A user's own fonts in the stock card folder first, then the fork's copy
+    // of the stock fonts on the card, then flash.
     if (fhd) {
         snprintf(fp[0], sizeof(fp[0]), "%s%s_FHD_000.bmp", FC_OSD_SDCARD_PATH, fc_variant);
-        snprintf(fp[1], sizeof(fp[1]), "%s%s_FHD_000.bmp", FC_OSD_LOCAL_PATH, fc_variant);
-        snprintf(fp[2], sizeof(fp[2]), "%sBTFL_FHD_000.bmp", FC_OSD_LOCAL_PATH);
+        snprintf(fp[1], sizeof(fp[1]), "%s%s_FHD_000.bmp", FC_OSD_FORK_PATH, fc_variant);
+        snprintf(fp[2], sizeof(fp[2]), "%s%s_FHD_000.bmp", FC_OSD_LOCAL_PATH, fc_variant);
+        snprintf(fp[3], sizeof(fp[3]), "%sBTFL_FHD_000.bmp", FC_OSD_FORK_PATH);
+        snprintf(fp[4], sizeof(fp[4]), "%sBTFL_FHD_000.bmp", FC_OSD_LOCAL_PATH);
     } else {
         snprintf(fp[0], sizeof(fp[0]), "%s%s_000.bmp", FC_OSD_SDCARD_PATH, fc_variant);
-        snprintf(fp[1], sizeof(fp[1]), "%s%s_000.bmp", FC_OSD_LOCAL_PATH, fc_variant);
-        snprintf(fp[2], sizeof(fp[2]), "%sBTFL_000.bmp", FC_OSD_LOCAL_PATH);
+        snprintf(fp[1], sizeof(fp[1]), "%s%s_000.bmp", FC_OSD_FORK_PATH, fc_variant);
+        snprintf(fp[2], sizeof(fp[2]), "%s%s_000.bmp", FC_OSD_LOCAL_PATH, fc_variant);
+        snprintf(fp[3], sizeof(fp[3]), "%sBTFL_000.bmp", FC_OSD_FORK_PATH);
+        snprintf(fp[4], sizeof(fp[4]), "%sBTFL_000.bmp", FC_OSD_LOCAL_PATH);
     }
 
     // Optimized for runtime execution
@@ -1399,7 +1405,7 @@ void load_fc_osd_font(uint8_t fhd) {
         break;
     }
 
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 5; i++) {
         if (!load_fc_osd_font_bmp(fp[i], fhd)) {
             LOGI(" succecss!");
             return;

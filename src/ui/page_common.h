@@ -32,6 +32,8 @@ extern "C" {
 
 #define FC_OSD_LOCAL_PATH  "/mnt/app/resource/OSD/FC/"
 #define FC_OSD_SDCARD_PATH "/mnt/extsd/resource/OSD/FC/"
+// The stock fonts copied to the card, read faster than from flash.
+#define FC_OSD_FORK_PATH   "/mnt/extsd/fork-system/resource/OSD/FC/"
 
 #define RESOURCE_PATH        "/mnt/app/resource/OSD/GOGGLE/"
 #define RESOURCE_PATH_SDCARD "/mnt/extsd/resource/OSD/GOGGLE/"

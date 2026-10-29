@@ -26,7 +26,7 @@ T="$SD/filltest"
 status() {
 	echo "== $SD"
 	df -h "$SD" | tail -1
-	for d in log DCIM/100HDZRO boot-logs; do
+	for d in log DCIM/100HDZRO fork-deletable/boot-logs; do
 		[ -d "$SD/$d" ] && printf '  %-16s %6d 本\n' "$d" "$(ls -A "$SD/$d" | wc -l)"
 	done
 	printf '  %-16s %6d 本\n' "(直下)" "$(ls -A "$SD" | wc -l)"

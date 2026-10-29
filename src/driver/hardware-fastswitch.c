@@ -187,7 +187,7 @@ static bool hdz_async_init_failed = false;
 // can come up while the main thread is still building the UI. The switch
 // then skips its own DM6302_SetChannel(): that rewrites the PLL and restarts
 // its calibration (0x118 strobes), which would throw the head start away.
-#define EARLY_TUNE_FLAG "/mnt/extsd/early-tune"
+#define EARLY_TUNE_FLAG "/mnt/extsd/fork-system/early-tune"
 static int hdz_early_tuned = -1; // (band << 8) | ch, or -1
 
 static void hdz_early_tune(void) {
@@ -214,7 +214,7 @@ static void hdz_early_tune(void) {
 // 0.27 s after the panel: the wait is after the link. If it is the baseband
 // settling into the mode it was just given, giving it the mode early moves
 // that wait off the path. The switch skips its own SetFPS for the same mode.
-#define EARLY_FPS_FLAG "/mnt/extsd/early-fps"
+#define EARLY_FPS_FLAG "/mnt/extsd/fork-system/early-fps"
 static int hdz_early_fps = -1;
 
 static void hdz_early_fps_send(void) {

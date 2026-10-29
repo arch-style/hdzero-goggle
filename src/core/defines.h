@@ -25,12 +25,18 @@
 
 #define SELF_TEST_FILE    "/mnt/extsd/self_test.txt"
 #define NO_DIAL_FILE      "/mnt/extsd/no_dial.txt"
-#define APP_LOG_FILE      "/mnt/extsd/HDZGOGGLE.log"
-#define APP_LOG_FILE_PREV "/mnt/extsd/HDZGOGGLE.prev.log"
+// The fork's own files on the card (2026-10-29): what it needs to run in
+// FORK_SYSTEM_DIR, what can be deleted (logs, old versions) in
+// FORK_DELETABLE_DIR. The card's root keeps the stock names only, plus the
+// scripts the flash hooks call by name.
+#define FORK_SYSTEM_DIR    "/mnt/extsd/fork-system"
+#define FORK_DELETABLE_DIR "/mnt/extsd/fork-deletable"
+#define APP_LOG_FILE      FORK_DELETABLE_DIR "/HDZGOGGLE.log"
+#define APP_LOG_FILE_PREV FORK_DELETABLE_DIR "/HDZGOGGLE.prev.log"
 // Finished boots live here, one file each, numbered upwards: the current one
-// is APP_LOG_FILE in the root, where rc.sh expects it, and everything else is
-// out of the way of the recordings.
-#define APP_LOG_DIR       "/mnt/extsd/boot-logs"
+// is APP_LOG_FILE beside it, and everything is out of the way of the
+// recordings.
+#define APP_LOG_DIR       FORK_DELETABLE_DIR "/boot-logs"
 #define APP_LOG_FILE_OLD  APP_LOG_DIR "/HDZGOGGLE.%04u.log"
 // The record process's own output. rc.sh sends it here whenever the file
 // exists at boot; it is truncated every boot, so the app moves it in with
@@ -43,7 +49,7 @@
 // 100MB: 35 seconds of video on a card that holds six hours, at the measured
 // 2.86MB/s. The number in the name keeps climbing; only the window moves.
 #define APP_LOG_KEEP      999
-#define APP_BIN_FILE      "/mnt/extsd/HDZGOGGLE"
+#define APP_BIN_FILE      FORK_SYSTEM_DIR "/HDZGOGGLE"
 #define DEVELOP_SCRIPT    "/mnt/extsd/develop.sh"// The 9.5.1 Goggle 2 tree had this as a runtime check; in the merged tree the
 // target is a compile-time choice, so it is one here too.
 #ifdef HDZGOGGLE2

@@ -8,6 +8,12 @@
 # 続けて走らせ、録画プロセスやアプリが二重に起動する。
 #
 # 各段階の経過秒をカードの rc-exp.log に書く (読むのは Mac で)。
+# カードの整理 (2026-10-29): 動かすのに要るものは fork-system/、消してよいもの
+# (ログ、古い版) は fork-deletable/。カード直下に残すのは純正のもの
+# (DCIM, FIRMWARE, FSCK, log, HDZG_*.bin などの決まった名前) と、フラッシュの
+# 入口が名前で呼ぶ rc-exp.sh, init-exp.sh, early-exp.sh, develop.sh だけ。
+SYS=/mnt/extsd/fork-system
+DEL=/mnt/extsd/fork-deletable
 
 # --- 実験の設定 (1 = その変更を入れる) ---
 # 純正はドライバを入れる前に理由なく 1 秒待つ
@@ -102,11 +108,11 @@ case "$STAGE" in 1[5-9]|2[0-9]|[3-9][0-9]|[1-9][0-9][0-9]) EFUSE_CACHE=1 ;; esac
 FAST_LAUNCH=0
 case "$STAGE" in 2[1-9]|[3-9][0-9]|[1-9][0-9][0-9]) FAST_LAUNCH=1 ;; esac
 # この起動の通し番号 (カードの boot-logs/count)。アプリのログの写しの名前に使う。
-mkdir -p /mnt/extsd/boot-logs 2>/dev/null
-BOOTN=$(( $(tr -dc 0-9 < /mnt/extsd/boot-logs/count 2>/dev/null) + 1 ))
-echo "$BOOTN" > /mnt/extsd/boot-logs/count 2>/dev/null
+mkdir -p $SYS $DEL/boot-logs 2>/dev/null
+BOOTN=$(( $(tr -dc 0-9 < $DEL/boot-logs/count 2>/dev/null) + 1 ))
+echo "$BOOTN" > $DEL/boot-logs/count 2>/dev/null
 
-LOG=/mnt/extsd/rc-exp.log
+LOG=$DEL/rc-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG" 2>/dev/null
 }
@@ -133,9 +139,9 @@ function setup_uart()
 # まま。カードの写しが読めなければ純正の disp.ko に戻る。
 function dispw_x()
 {
-	if [ -f /mnt/extsd/ko/disp.ko ]; then
+	if [ -f $SYS/ko/disp.ko ]; then
 		aww 0x07000160 0x083f10b7
-		if insmod /mnt/extsd/ko/disp.ko; then
+		if insmod $SYS/ko/disp.ko; then
 			t "disp.ko from card"
 		else
 			insmod /mnt/app/ko/disp.ko
@@ -222,8 +228,8 @@ function update_boot()
 
 echo "0 4 1 7">/proc/sys/kernel/printk
 
-if [ "$PRELOAD" = 1 ] && [ -f /mnt/extsd/preload.txt ]; then
-	( while read -r f; do cat "$f" > /dev/null 2>&1; done < /mnt/extsd/preload.txt
+if [ "$PRELOAD" = 1 ] && [ -f $SYS/preload.txt ]; then
+	( while read -r f; do cat "$f" > /dev/null 2>&1; done < $SYS/preload.txt
 	  t "preload done" ) &
 fi
 
@@ -270,24 +276,24 @@ app_pid() {
 # 最小限に。本体は init-exp.sh が /tmp に写したもの (大きさが合うとき)。
 # 0 以外で終われば、呼び出し側が従来どおり develop.sh を使う。
 fast_launch() {
-	[ -f /mnt/extsd/HDZGOGGLE ] || return 1
-	REPORT=/mnt/extsd/vo-patch.log
-	[ -e /mnt/extsd/goggle2-restore-setting.sh ] && /bin/sh /mnt/extsd/goggle2-restore-setting.sh g2
-	SZ=$(ls -l /mnt/extsd/HDZGOGGLE | awk '{print $5}')
+	[ -f $SYS/HDZGOGGLE ] || return 1
+	REPORT=$DEL/vo-patch.log
+	[ -e $SYS/goggle2-restore-setting.sh ] && /bin/sh $SYS/goggle2-restore-setting.sh g2
+	SZ=$(ls -l $SYS/HDZGOGGLE | awk '{print $5}')
 	if [ -s /tmp/HDZGOGGLE.staged.done ] && [ "$(cat /tmp/HDZGOGGLE.staged.done)" = "$SZ" ] \
 	   && [ "$(ls -l /tmp/HDZGOGGLE.staged | awk '{print $5}')" = "$SZ" ] \
 	   && mv /tmp/HDZGOGGLE.staged /tmp/HDZGOGGLE 2>/dev/null; then
 		APP=/tmp/HDZGOGGLE
-	elif cp /mnt/extsd/HDZGOGGLE /tmp/HDZGOGGLE 2>/dev/null && chmod +x /tmp/HDZGOGGLE; then
+	elif cp $SYS/HDZGOGGLE /tmp/HDZGOGGLE 2>/dev/null && chmod +x /tmp/HDZGOGGLE; then
 		APP=/tmp/HDZGOGGLE
 	else
 		return 1
 	fi
 	"$APP" &
 	t "app launched (fast, $APP)"
-	( [ -e /mnt/extsd/goggle2-backup.sh ] && SYNC_BG=1 /bin/sh /mnt/extsd/goggle2-backup.sh g2
-	  echo "platform=[fast launch] model=g2" >> /mnt/extsd/model-history.txt
-	  [ -e /mnt/extsd/wifi-hello.sh ] && /bin/sh /mnt/extsd/wifi-hello.sh ) > /dev/null 2>&1 &
+	( [ -e $SYS/goggle2-backup.sh ] && SYNC_BG=1 /bin/sh $SYS/goggle2-backup.sh g2
+	  echo "platform=[fast launch] model=g2" >> $DEL/model-history.txt
+	  [ -e $SYS/wifi-hello.sh ] && /bin/sh $SYS/wifi-hello.sh ) > /dev/null 2>&1 &
 	# 起動から 8 秒でアプリがいなければ純正で起動し、結果を書いたら
 	# /tmp/launch-report.done を置く。記録を書く側 (LATE_SDSTAT) はこれを
 	# 待ってからビープを鳴らすので、ビープの後にカードへ書くものは残らない。
@@ -338,7 +344,7 @@ record_env() {
 # 固まる。カードの fork 本体が関門を持つことは、Mac の check-sd.sh が本体を
 # 調べて HDZGOGGLE.features に i2c_gate と書いたときだけ信じる。無ければ
 # これまでどおり関門の後に起動する。
-if [ "$APP_BEFORE_I2C" = 1 ] && ! grep -qs '^i2c_gate$' /mnt/extsd/HDZGOGGLE.features; then
+if [ "$APP_BEFORE_I2C" = 1 ] && ! grep -qs '^i2c_gate$' $SYS/HDZGOGGLE.features; then
 	t "APP_BEFORE_I2C ignored: HDZGOGGLE.features does not say i2c_gate"
 	APP_BEFORE_I2C=0
 fi
@@ -375,7 +381,7 @@ if [ "$APP_BEFORE_I2C" = 1 ]; then
 	else
 		t "UDISK not mounted after 2 s, launching anyway"
 	fi
-	[ -f /mnt/extsd/app-sampler.sh ] && /bin/sh /mnt/extsd/app-sampler.sh &
+	[ -f $SYS/app-sampler.sh ] && /bin/sh $SYS/app-sampler.sh &
 	start_app
 	t "app launched (before I2C; ports $APP_I2C_GATED_PORTS not before $I2C_NOT_BEFORE; port 2 not before $PORT2_NOT_BEFORE)"
 fi
@@ -438,7 +444,7 @@ if [ "$APP_BEFORE_I2C" != 1 ]; then
 	wait_dispw
 
 	# アプリが main() に入るまでを外から見る (app-sampler.sh があれば)。
-	[ -f /mnt/extsd/app-sampler.sh ] && /bin/sh /mnt/extsd/app-sampler.sh &
+	[ -f $SYS/app-sampler.sh ] && /bin/sh $SYS/app-sampler.sh &
 
 	#start applicaion
 	start_app
@@ -450,11 +456,11 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 	# ついでに dmesg をカードに控える (リングバッファは約 16KB で、16 秒ごろの
 	# IT66121 の NACK 連打に押し出される前に取る)。画面切り替えの [VDPO] の
 	# disable から enable までの間隔 (disp.ko の差し替えの確認) を見る。
-	( sleep "$RECORD_DELAY"; /mnt/app/script/sdstat_log_backup.sh > /dev/null 2>&1; t "late sdstat done"; dmesg > /mnt/extsd/dmesg-late.txt 2>/dev/null
+	( sleep "$RECORD_DELAY"; /mnt/app/script/sdstat_log_backup.sh > /dev/null 2>&1; t "late sdstat done"; dmesg > $DEL/dmesg-late.txt 2>/dev/null
 	  # アプリのログは次の起動で上書きされるので、ここまでの分を写しておく
 	  # (映像が出るまでの時刻はこの中)。
-	  cp /mnt/extsd/HDZGOGGLE.log "/mnt/extsd/boot-logs/boot$BOOTN-stage$STAGE.log" 2>/dev/null
-	  cp /mnt/extsd/dmesg-late.txt "/mnt/extsd/boot-logs/boot$BOOTN-stage$STAGE.dmesg" 2>/dev/null
+	  cp $DEL/HDZGOGGLE.log "$DEL/boot-logs/boot$BOOTN-stage$STAGE.log" 2>/dev/null
+	  cp $DEL/dmesg-late.txt "$DEL/boot-logs/boot$BOOTN-stage$STAGE.dmesg" 2>/dev/null
 	  # 起動確認の報告 (fast_launch) が書き終わるまで待つ (最大 10 秒)
 	  if [ "$FAST_USED" = 1 ]; then
 		i=0
@@ -462,20 +468,20 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 	  fi
 	  # カードを使うほど重くなる処理の計測 (fill-probe.sh があれば、2026-10-18)。
 	  # fsck.fat -n を含むので数秒かかる。ビープはその後。
-	  [ -f /mnt/extsd/fill-probe.sh ] && /bin/sh /mnt/extsd/fill-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
+	  [ -f $SYS/fill-probe.sh ] && /bin/sh $SYS/fill-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
 	  # 上書き領域の rcS の写し (v3) を入れ直す (goggle2-install-rcs.sh があれば、2026-10-20 夜)。
 	  # 一度だけ書き、効くのは次の起動から。結果は goggle2-install-rcs/result.txt。
-	  [ -f /mnt/extsd/goggle2-install-rcs.sh ] && /bin/sh /mnt/extsd/goggle2-install-rcs.sh g2 > /dev/null 2>&1
+	  [ -f $SYS/goggle2-install-rcs.sh ] && /bin/sh $SYS/goggle2-install-rcs.sh g2 > /dev/null 2>&1
 	  # カーネルとブートローダの情報を読む (kernel-probe.sh があれば、2026-10-19)。読むだけ。
-	  [ -f /mnt/extsd/kernel-probe.sh ] && /bin/sh /mnt/extsd/kernel-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
+	  [ -f $SYS/kernel-probe.sh ] && /bin/sh $SYS/kernel-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
 	  # initcall_debug を一度だけ入れて測り、戻す (env-initcall/ があれば、2026-10-19)。
-	  [ -f /mnt/extsd/env-initcall.sh ] && /bin/sh /mnt/extsd/env-initcall.sh > /dev/null 2>&1
+	  [ -f $SYS/env-initcall.sh ] && /bin/sh $SYS/env-initcall.sh > /dev/null 2>&1
 	  # カードのカーネルを試す起動手順と、その段の進行 (env-bootcmd/ があれば、2026-10-19)。
-	  [ -f /mnt/extsd/env-bootcmd.sh ] && /bin/sh /mnt/extsd/env-bootcmd.sh > /dev/null 2>&1
+	  [ -f $SYS/env-bootcmd.sh ] && /bin/sh $SYS/env-bootcmd.sh > /dev/null 2>&1
 	  C=/sys/devices/system/cpu/cpu0/cpufreq
 	  { echo "== cpufreq at records $(cut -d' ' -f1 /proc/uptime)"
 	    echo "gov=$(cat $C/scaling_governor) cur=$(cat $C/scaling_cur_freq) min=$(cat $C/scaling_min_freq) trans=$(cat $C/stats/total_trans)"
-	    cat $C/stats/time_in_state; } >> "/mnt/extsd/boot-logs/early-stage$STAGE.txt" 2>/dev/null
+	    cat $C/stats/time_in_state; } >> "$DEL/boot-logs/early-stage$STAGE.txt" 2>/dev/null
 	  # init-exp.sh が起動中だけ最高に固定した最低クロックを、元に戻す。
 	  cat $C/cpuinfo_min_freq > $C/scaling_min_freq 2>/dev/null
 	  # カードから起動する作ったカーネル (hdzlike7 以降) は起動時の governor が performance。

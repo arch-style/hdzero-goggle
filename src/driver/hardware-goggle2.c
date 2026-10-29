@@ -942,7 +942,7 @@ void Display_1080P30(int mode) {
 // reported. Only the modes on the Display_720P60_50_t() path are taken from
 // the file; the others change the vdpo timing as well, and starting in one of
 // those has not been tried from here.
-#define CAM_MODE_CACHE_FILE "/mnt/extsd/cam-mode.txt"
+#define CAM_MODE_CACHE_FILE "/mnt/extsd/fork-system/cam-mode.txt"
 
 static video_resolution_t cam_mode_last = VR_720P60;
 static uint8_t cam_4_3_last = 0;

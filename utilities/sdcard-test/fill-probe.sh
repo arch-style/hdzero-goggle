@@ -25,7 +25,8 @@
 STAGE=${1:-0}
 BOOTN=${2:-0}
 SD=/mnt/extsd
-OUT=$SD/boot-logs/fill-stage$STAGE.txt
+DEL=$SD/fork-deletable
+OUT=$DEL/boot-logs/fill-stage$STAGE.txt
 C=/sys/devices/system/cpu/cpu0/cpufreq
 
 now() {
@@ -120,7 +121,7 @@ df /mnt/extsd 2>/dev/null | tail -1 | sed 's/^/df: /' >> "$OUT"
 
 [ -d $SD/log ] && probe_sdstat $SD/log
 [ -d $SD/DCIM/100HDZRO ] && probe_ls $SD/DCIM/100HDZRO
-[ -d $SD/boot-logs ] && probe_ls $SD/boot-logs
+[ -d $DEL/boot-logs ] && probe_ls $DEL/boot-logs
 probe_root
 
 for d in $SD/filltest/log-*; do
@@ -134,5 +135,5 @@ probe_fsck
 
 now
 put "fill-probe end $u cur=$(cat $C/scaling_cur_freq 2>/dev/null) total_ms=$(( (NOW - T0) * 10 ))"
-echo "$u fill probe done ($(( (NOW - T0) * 10 )) ms, boot-logs/fill-stage$STAGE.txt)" >> $SD/rc-exp.log
+echo "$u fill probe done ($(( (NOW - T0) * 10 )) ms, boot-logs/fill-stage$STAGE.txt)" >> $DEL/rc-exp.log
 exit 0

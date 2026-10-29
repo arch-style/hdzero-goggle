@@ -39,6 +39,11 @@ if [ ! -d "$SD" ]; then
 	exit 1
 fi
 
+# 2026-10-29 からカードの fork のものは 2 つのフォルダにある。動かすのに要るものは
+# fork-system/、消してよいもの (ログ、古い版) は fork-deletable/。
+SYSD="$SD/fork-system"
+DELD="$SD/fork-deletable"
+
 echo "== $SD の中身 =="
 ls -la "$SD" | sed 's/^/  /'
 echo
@@ -138,9 +143,9 @@ if [ -f "$X" ]; then
 	# APP_BEFORE_I2C は、アプリ自身が I2C を関門まで待たせるときだけ安全。
 	# rc-exp.sh は HDZGOGGLE.features の i2c_gate を見て判断するので、ここで
 	# 本体と突き合わせる。
-	FEAT="$SD/HDZGOGGLE.features"
+	FEAT="$SYSD/HDZGOGGLE.features"
 	if grep -qs '^i2c_gate$' "$FEAT"; then
-		if strings "$SD/HDZGOGGLE" 2>/dev/null | grep -q 'HDZ_I2C_NOT_BEFORE'; then
+		if strings "$SYSD/HDZGOGGLE" 2>/dev/null | grep -q 'HDZ_I2C_NOT_BEFORE'; then
 			ok "HDZGOGGLE は I2C の関門を持つ (HDZGOGGLE.features と一致)"
 		else
 			ng "HDZGOGGLE.features は i2c_gate と言うが、HDZGOGGLE に関門が無い。早く起動すると I2C が固まる"
@@ -152,11 +157,11 @@ if [ -f "$X" ]; then
 	# goggle2-install-hooks.sh は、フラッシュの rc.sh と上書き領域の rc.final に
 	# 入口を書く唯一のカード側スクリプト。写しが手元の goggle2-flash/ と同一で、
 	# まだ DONE が無いときだけ、次の起動で一度書く。
-	IH="$SD/goggle2-install-hooks.sh"
+	IH="$SYSD/goggle2-install-hooks.sh"
 	if [ -f "$IH" ]; then
-		if [ -e "$SD/goggle2-install-hooks/DONE" ]; then
+		if [ -e "$SYSD/goggle2-install-hooks/DONE" ]; then
 			say "goggle2-install-hooks.sh は済み (DONE あり)"
-		elif [ "$(md5 -q "$SD/goggle2-flash/rc.sh" 2>/dev/null)" = "$(md5 -q "$ROOT/utilities/sdcard-test/goggle2-flash/rc.sh")" ] && [ "$(md5 -q "$SD/goggle2-flash/rc.final" 2>/dev/null)" = "$(md5 -q "$ROOT/utilities/sdcard-test/goggle2-flash/rc.final")" ]; then
+		elif [ "$(md5 -q "$SYSD/goggle2-flash/rc.sh" 2>/dev/null)" = "$(md5 -q "$ROOT/utilities/sdcard-test/goggle2-flash/rc.sh")" ] && [ "$(md5 -q "$SYSD/goggle2-flash/rc.final" 2>/dev/null)" = "$(md5 -q "$ROOT/utilities/sdcard-test/goggle2-flash/rc.final")" ]; then
 			ok "goggle2-install-hooks.sh: 次の Goggle 2 の起動で rc.sh と rc.final の入口をフラッシュに書く (写しは手元と同一)"
 		else
 			ng "goggle2-install-hooks.sh があるが、カードの goggle2-flash/rc.sh か rc.final が手元と違う"
@@ -165,7 +170,7 @@ if [ -f "$X" ]; then
 	# カードの ko/disp.ko は、rc-exp.sh と init-exp.sh の dispw_x が純正の
 	# disp.ko の代わりに insmod する (goggle2-ko/README.md)。手元の写しと
 	# 同一でなければ入れない (壊れた .ko を insmod すると画面が出ない)。
-	KO="$SD/ko/disp.ko"
+	KO="$SYSD/ko/disp.ko"
 	if [ -f "$KO" ]; then
 		if [ "$(md5 -q "$KO")" = "$(cut -d' ' -f1 < "$ROOT/utilities/sdcard-test/goggle2-ko/disp.ko.md5" 2>/dev/null)" ]; then
 			ok "ko/disp.ko は goggle2-ko/disp.ko と同一 (1 秒待ちを 100 ms にした写し)"
@@ -177,10 +182,10 @@ if [ -f "$X" ]; then
 	fi
 	# g2lib/: アプリと録画プロセスの共有ライブラリの写し (段階 9 以降、init-exp.sh
 	# が /tmp/lib に写す)。手元の一覧 (goggle2-ko/g2lib.md5) と同一か。
-	if [ -d "$SD/g2lib" ]; then
+	if [ -d "$SYSD/g2lib" ]; then
 		bad=0
 		while read -r sum name; do
-			[ "$(md5 -q "$SD/g2lib/$name" 2>/dev/null)" = "$sum" ] || bad=$((bad + 1))
+			[ "$(md5 -q "$SYSD/g2lib/$name" 2>/dev/null)" = "$sum" ] || bad=$((bad + 1))
 		done < "$ROOT/utilities/sdcard-test/goggle2-ko/g2lib.md5"
 		if [ $bad -eq 0 ]; then
 			ok "g2lib/ の $(wc -l < "$ROOT/utilities/sdcard-test/goggle2-ko/g2lib.md5" | tr -d ' ') ファイルは手元の写しと同一"
@@ -192,14 +197,14 @@ if [ -f "$X" ]; then
 	# 外部コマンドを起動し続けるので、起動の測定の条件が変わる。C1 (2026-10-16)
 	# からは .off で止めて測ってきた。新しいカードに有効なまま写してしまい、
 	# 受信チップの初期化が 0.1〜0.4 秒延びた疑いがある (2026-10-17)。
-	if [ -f "$SD/app-sampler.sh" ]; then
+	if [ -f "$SYSD/app-sampler.sh" ]; then
 		ng "app-sampler.sh が有効。起動を測るカードでは app-sampler.sh.off に改名する (測定の条件が前と変わる)"
 	fi
 	echo
 fi
 
 if [ $DUAL -eq 1 ]; then
-	G="$SD/develop.g2.sh"
+	G="$SYSD/develop.g2.sh"
 	if [ ! -f "$G" ]; then
 		say "develop.g2.sh が無い。Goggle 2 では純正が起動する"
 	else
@@ -215,7 +220,7 @@ if [ $DUAL -eq 1 ]; then
 	echo
 
 	# Goggle 2 の控えを取るスクリプト。読むだけであること、v1 では動かないことを見る。
-	K="$SD/goggle2-backup.sh"
+	K="$SYSD/goggle2-backup.sh"
 	if [ -f "$K" ]; then
 		# コメント行と、捨て先の /dev/null は見ない。
 		body=$(grep -v '^[[:space:]]*#' "$K" | sed 's#/dev/null##g')
@@ -235,7 +240,7 @@ if [ $DUAL -eq 1 ]; then
 			ng "goggle2-backup.sh に機種の確認が無い。v1 でも動いてしまう"
 		fi
 		if grep -q 'goggle2-backup.sh' "$D"; then
-			if [ -f "$SD/goggle2-backup/DONE" ]; then
+			if [ -f "$SYSD/goggle2-backup/DONE" ]; then
 				say "控えはもう取ってある (goggle2-backup/DONE)。次の起動は setting.ini を写すだけ"
 			else
 				say "次に Goggle 2 で起動すると控えを取る。初回だけ映像まで数十秒余計にかかる"
@@ -247,7 +252,7 @@ if [ $DUAL -eq 1 ]; then
 	fi
 
 	# 設定の書き戻し。書くのは /mnt/app/setting.ini だけであることを見る。
-	W="$SD/goggle2-restore-setting.sh"
+	W="$SYSD/goggle2-restore-setting.sh"
 	if [ -f "$W" ]; then
 		body=$(grep -v '^[[:space:]]*#' "$W" | sed 's#/dev/null##g')
 		if printf '%s\n' "$body" | grep -q 'mtd_debug\|fw_setenv\|flash_erase\|flashcp\|nandwrite\|of=/dev\|insmod\|write_flashes\|update_goggle\|update_vtx\|>[[:space:]]*"*/dev/\|tar -x\|tar x'; then
@@ -259,7 +264,7 @@ if [ $DUAL -eq 1 ]; then
 		else
 			ok "goggle2-restore-setting.sh は /mnt/app/setting.ini だけを書く"
 		fi
-		RS="$SD/goggle2-restore"
+		RS="$SYSD/goggle2-restore"
 		if [ -e "$RS/DONE" ]; then
 			say "書き戻しは済んでいる: $(tail -1 "$RS/result.txt" 2>/dev/null)"
 		elif [ ! -f "$RS/setting.ini" ]; then
@@ -276,7 +281,7 @@ if [ $DUAL -eq 1 ]; then
 	fi
 
 	echo "== 3. HDZGOGGLE.v1 (v1 で起動する fork) =="
-	A="$SD/HDZGOGGLE.v1"
+	A="$SYSD/HDZGOGGLE.v1"
 	if [ ! -f "$A" ]; then
 		say "無い。v1 では純正アプリが起動する"
 	else
@@ -304,7 +309,7 @@ if [ $DUAL -eq 1 ]; then
 	echo
 
 	echo "== 4. 持ち主の setting.ini の控え =="
-	O="$SD/goggle-backup/setting.ini.orig"
+	O="$SYSD/goggle-backup/setting.ini.orig"
 	if [ ! -f "$O" ]; then
 		ng "goggle-backup/setting.ini.orig が無い。このまま v1 で起動すると fork が変えた後の設定を原本として控えてしまう。Mac の logs/goggle-v1/*/goggle-backup/setting.ini.orig を先に入れる"
 	elif [ "$(shasum "$O" | cut -d' ' -f1)" = "$ORIG_SHA" ]; then
@@ -315,7 +320,7 @@ if [ $DUAL -eq 1 ]; then
 	echo
 
 	echo "== 5. HDZGOGGLE (Goggle 2 で起動する fork) =="
-	A="$SD/HDZGOGGLE"
+	A="$SYSD/HDZGOGGLE"
 	if [ -f "$A" ]; then
 		if strings "$A" | grep -q 'driver/hardware-goggle2\.c'; then
 			ok "Goggle 2 用 (v1 では起動されない)"
@@ -335,7 +340,7 @@ fi
 
 if [ $DUAL -eq 0 ]; then
 echo "== 3. HDZGOGGLE (fork バイナリ) =="
-A="$SD/HDZGOGGLE"
+A="$SYSD/HDZGOGGLE"
 if [ ! -f "$A" ]; then
 	say "無い。develop.sh が stage1 なら純正アプリにフォールバックする"
 else
@@ -359,6 +364,26 @@ else
 fi
 echo
 fi
+
+echo "== カード直下の整理 (2026-10-29) =="
+# 直下に置いてよいのは、純正の名前 (ゴーグルが作るフォルダと決まった名前のファイル)、
+# フラッシュの入口が名前で呼ぶ 4 本、fork の 2 つのフォルダだけ。ほかは fork-system/
+# (要る) か fork-deletable/ (消してよい) へ。危険ではないので注意だけ出す。
+extra=0
+for e in "$SD"/* ; do
+	n=$(basename "$e")
+	case "$n" in
+	DCIM|FIRMWARE|FSCK|log|movies|ELRS|resource|isp0_0_0_0_ctx_saved.bin) ;;
+	RECORD.log|SERVICES.log|HDZGOGGLE.log) ;;
+	rc-exp.sh|init-exp.sh|early-exp.sh|develop.sh) ;;
+	fork-system|fork-deletable) ;;
+	\*) ;;
+	*) say "直下に $n がある (fork-system/ か fork-deletable/ へ)"; extra=$((extra + 1)) ;;
+	esac
+done
+[ $extra -eq 0 ] && ok "直下は純正のものと入口の 4 本、2 つのフォルダだけ"
+[ -d "$SYSD" ] || ng "fork-system/ が無い (アプリ本体、段階の番号、カメラ形式の控えがここにある)"
+echo
 
 if [ $fail -eq 0 ]; then
 	echo "OK: このまま挿してよい"

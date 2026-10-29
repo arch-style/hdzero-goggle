@@ -105,8 +105,8 @@
 #include "ui/ui_main_menu.h"
 #include "ui/ui_player.h"
 
-#define AUTOTEST_FILE "/mnt/extsd/autotest.txt"
-#define AUTOTEST_RAN "/mnt/extsd/autotest.ran.txt"
+#define AUTOTEST_FILE FORK_SYSTEM_DIR "/autotest.txt"
+#define AUTOTEST_RAN FORK_DELETABLE_DIR "/autotest.ran.txt"
 #define AUTOTEST_MEDIA_DIR "/mnt/extsd/DCIM/100HDZRO/"
 #define AUTOTEST_GRAB_DIR "/mnt/extsd/grab"
 // Time for the menu to settle after boot before the first command.

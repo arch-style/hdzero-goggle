@@ -13,7 +13,13 @@
 #               通信を出し続けたときに Mac から見えるようになるかを見る
 # Mac の IP はカードの wifi-hello.txt の 1 行目 (wifi-hello.sh と同じ)。無ければ
 # 以前の自宅の値。
-MAC_IP=$(head -1 /mnt/extsd/wifi-hello.txt 2>/dev/null | tr -d ' \r')
+# カードの整理 (2026-10-29): 動かすのに要るものは fork-system/、消してよいもの
+# (ログ、古い版) は fork-deletable/。カード直下に残すのは純正のもの
+# (DCIM, FIRMWARE, FSCK, log, HDZG_*.bin などの決まった名前) と、フラッシュの
+# 入口が名前で呼ぶ rc-exp.sh, init-exp.sh, early-exp.sh, develop.sh だけ。
+SYS=/mnt/extsd/fork-system
+DEL=/mnt/extsd/fork-deletable
+MAC_IP=$(head -1 $SYS/wifi-hello.txt 2>/dev/null | tr -d ' \r')
 [ -n "$MAC_IP" ] || MAC_IP=192.168.40.46
 
 if [ "$1" = keepalive ]; then

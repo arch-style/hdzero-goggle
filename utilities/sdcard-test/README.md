@@ -192,6 +192,23 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 - `app-sampler.sh` は測るときは `.off` にしておく (動いていると受信チップの
   初期化が延びる)。`check-sd.sh` が NG にする。
 
+カードの配置 (2026-10-29 から): 直下には純正の名前 (DCIM, FIRMWARE, FSCK, log,
+isp0_0_0_0_ctx_saved.bin) と、フラッシュの入口が名前で呼ぶ `rc-exp.sh`、`init-exp.sh`、
+`early-exp.sh`、`develop.sh` (= develop.sh.dual) だけを置く。fork のものは 2 つのフォルダ:
+
+- `fork-system/` (動かすのに要る): `HDZGOGGLE`、`HDZGOGGLE.features`、`g2lib/`、`ko/`、`lib/`、
+  `preload.txt`、`stage.txt`、`cam-mode.txt`、`efuse-cache.bin`、`develop.g2.sh`
+  (= develop.sh.vopatch)、`wifi-hello.sh`/`.txt`、`wifi-state.sh`、`goggle-backup/`、
+  `resource/OSD/FC/` (純正フォントの写し)。旗のファイル (`early-tune`、
+  `early-fps`、`novopatch`、`autotest.txt`) と、使うときだけ置く道具 (`app-sampler.sh`、
+  `fill-probe.sh`、`kernel-probe.sh`、`env-*.sh`、`goggle2-*.sh`) もここ。
+- `fork-deletable/` (消してよい): `boot-logs/`、`HDZGOGGLE.log`、`rc-exp.log`、`init-exp.log`、
+  `dev-stage/`、dmesg の写し、古い版、止めた道具とその結果。消してもスクリプトとアプリが作り直す。
+
+`check-sd.sh` は最後に直下を点検し、上の決まったもの以外があれば知らせる。
+
+以下の一覧は 2026-10-29 より前の配置 (すべて直下) で書いてある。
+
 起動を測るカード (HDZERO_BOOT、32GB、FAT32 の 64KB クラスタ) に置くもの:
 `rc-exp.sh`、`init-exp.sh`、`develop.sh` (= develop.sh.dual)、`develop.g2.sh`
 (= develop.sh.vopatch)、`goggle2-*.sh`、`wifi-hello.sh` と `wifi-hello.txt`、
