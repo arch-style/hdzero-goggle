@@ -19,16 +19,20 @@
 # 次の起動からは何もしない。元に戻すのは goggle2-flash/*.orig を同じ手順で
 # 書き戻すか、SD からの緊急更新。
 
+# 2026-10-29: 入口が fork-system/ を先に見る版へ。カードのこのスクリプトと写しも
+# fork-system/ に置く。それまでの入口入りの版 (cb87f258 / efe8f153) からも上げる。
 STOCK_RC=5fe8e7e1775d7a07f29c6c53b171883b
-HOOKED_RC=cb87f2580bfce48f3198f94401454d7e
+PREV_RC=cb87f2580bfce48f3198f94401454d7e
+HOOKED_RC=b766e5633fb8a70d267e582784520540
 STOCK_FINAL=07c372b5b13ea55dc9b35e69484d1fac
 # rc.final: 入口だけの版 (2026-10-16) と、それに起動の段の印を足した版 (2026-10-17)。
 # 入口だけの版は、純正と同じく新しい版へ上げてよいものとして扱う。
 PREV_FINAL=cbc2056aa493be98a8832c185a2b8b70
-HOOKED_FINAL=efe8f15333a125490c5f55834eb6b041
+PREV2_FINAL=efe8f15333a125490c5f55834eb6b041
+HOOKED_FINAL=f23fd7ab99b012bb65988471266e200a
 
-R=/mnt/extsd/goggle2-install-hooks
-SRC=/mnt/extsd/goggle2-flash
+R=/mnt/extsd/fork-system/goggle2-install-hooks
+SRC=/mnt/extsd/fork-system/goggle2-flash
 [ -f "$SRC/rc.sh" ] && [ -f "$SRC/rc.final" ] || exit 0
 [ -e "$R/DONE" ] && exit 0
 if [ "$1" != g2 ]; then
@@ -62,7 +66,7 @@ DST=/mnt/app/script/rc.sh
 cur=$(m "$DST")
 if [ "$cur" = "$HOOKED_RC" ]; then
 	say "rc.sh: すでに入口入り"
-elif [ "$cur" != "$STOCK_RC" ]; then
+elif [ "$cur" != "$STOCK_RC" ] && [ "$cur" != "$PREV_RC" ]; then
 	say "rc.sh: 純正でも入口入りでもない ($cur)。触らない"
 else
 	cp "$DST" "$R/rc.sh.before"
@@ -81,7 +85,7 @@ DST=/etc/init.d/rc.final
 cur=$(m "$DST")
 if [ "$cur" = "$HOOKED_FINAL" ]; then
 	say "rc.final: すでに入口入り"
-elif [ "$cur" != "$STOCK_FINAL" ] && [ "$cur" != "$PREV_FINAL" ]; then
+elif [ "$cur" != "$STOCK_FINAL" ] && [ "$cur" != "$PREV_FINAL" ] && [ "$cur" != "$PREV2_FINAL" ]; then
 	say "rc.final: 純正でも入口入りでもない ($cur)。触らない"
 else
 	cp "$DST" "$R/rc.final.before"

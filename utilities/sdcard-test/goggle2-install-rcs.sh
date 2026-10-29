@@ -1,12 +1,12 @@
 #!/bin/sh
-# Goggle 2 の上書き領域に、起動時間の実験用の rcS の写し (v3) を入れ直す (一度だけ)。
+# Goggle 2 の上書き領域に、起動時間の実験用の rcS の写し (v4) を入れ直す (一度だけ)。
 # PhoenixCard のあと、SSH が使えない場所で使う。rc-exp.sh が記録の終わりに g2 を付けて呼ぶ。
 # 効くのは次の起動から。
 #
 # 書くもの: /etc/init.d/rcS。読み出し専用の純正 rcS の上に、上書き領域 (/overlay/upperdir) の
-# ファイルとしてできる。中身は goggle2-flash/rcS.v3 (md5 fc9058fe)。2026-10-17 と 2026-10-20 に
+# ファイルとしてできる。中身は goggle2-flash/rcS.v4 (md5 514caff8)。2026-10-17 と 2026-10-20 に
 # SSH で書いたのと同じ手順 (隣に .new を書き、md5 と sh -n を確かめてから mv)。
-# いまの rcS が純正 (a98ac80e)、v1 (ca520542)、v2 (258268277f) のときだけ書く。すでに v3 なら
+# いまの rcS が純正 (a98ac80e)、v1 (ca520542)、v2 (258268277f)、v3 (fc9058fe) のときだけ書く。すでに v4 なら
 # 何もしない。それ以外なら触らない。
 # 元に戻すのは /overlay/upperdir/etc/init.d/rcS を消す。/etc/init.d/rcS を消してはいけない
 # (純正まで隠れて起動しなくなる)。
@@ -15,8 +15,11 @@ STOCK=a98ac80ea33aebcc473b651e95a21b9c
 V1=ca520542a353ed7ea7c72636caf43710
 V2=258268277f4ab2de326a0befb8f594ed
 V3=fc9058fef07d9c13debf0107734d3ceb
-R=/mnt/extsd/goggle2-install-rcs
-SRC=/mnt/extsd/goggle2-flash/rcS.v3
+# 2026-10-29: v4 (early-exp.sh と rcs-flags を fork-system/ から先に探す)。v3 からも上げる。
+# カードのこのスクリプトと写しは fork-system/ に置く。
+V4=514caff8774deb2a5f50d6d4ab926744
+R=/mnt/extsd/fork-system/goggle2-install-rcs
+SRC=/mnt/extsd/fork-system/goggle2-flash/rcS.v4
 DST=/etc/init.d/rcS
 [ -f "$SRC" ] || exit 0
 [ -e "$R/DONE" ] && exit 0
@@ -38,8 +41,8 @@ say() {
 }
 m() { md5sum < "$1" 2>/dev/null | cut -d' ' -f1; }
 
-if [ "$(m "$SRC")" != "$V3" ]; then
-	say "skip: カードの goggle2-flash/rcS.v3 の md5 が合わない ($(m "$SRC"))"
+if [ "$(m "$SRC")" != "$V4" ]; then
+	say "skip: カードの goggle2-flash/rcS.v4 の md5 が合わない ($(m "$SRC"))"
 	date > "$R/DONE"; sync
 	exit 0
 fi
@@ -48,12 +51,12 @@ if ! grep -qs overlay /proc/mounts; then
 	exit 0
 fi
 cur=$(m "$DST")
-if [ "$cur" = "$V3" ]; then
-	say "rcS: すでに v3 ($cur)"
+if [ "$cur" = "$V4" ]; then
+	say "rcS: すでに v4 ($cur)"
 	date > "$R/DONE"; sync
 	exit 0
 fi
-if [ "$cur" != "$STOCK" ] && [ "$cur" != "$V1" ] && [ "$cur" != "$V2" ]; then
+if [ "$cur" != "$STOCK" ] && [ "$cur" != "$V1" ] && [ "$cur" != "$V2" ] && [ "$cur" != "$V3" ]; then
 	say "rcS: 純正でも実験の写しでもない ($cur)。触らない"
 	date > "$R/DONE"; sync
 	exit 0
@@ -67,7 +70,7 @@ if ! cp "$SRC" "$DST.new"; then
 	exit 0
 fi
 chmod 775 "$DST.new"; sync
-if [ "$(m "$DST.new")" = "$V3" ] && sh -n "$DST.new"; then
+if [ "$(m "$DST.new")" = "$V4" ] && sh -n "$DST.new"; then
 	mv "$DST.new" "$DST" && sync
 	say "rcS: 書いた $(m "$DST") upperdir: $(m /overlay/upperdir/etc/init.d/rcS)"
 else

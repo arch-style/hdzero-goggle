@@ -4,8 +4,11 @@
 # (起動時間の実験用、2026-10-16 に追加)。rc-exp.sh が 0 以外で終わったら、
 # ここから先の純正の手順をそのまま続ける。カードが無いか rc-exp.sh が
 # 無ければ、純正と同じ。
-if [ -f /mnt/extsd/rc-exp.sh ]; then
-	/bin/sh /mnt/extsd/rc-exp.sh && exit 0
+# 2026-10-29: カードの fork-system/ を先に見て、無ければ直下 (それまでの置き場所)。
+FORK_RC=/mnt/extsd/fork-system/rc-exp.sh
+[ -f "$FORK_RC" ] || FORK_RC=/mnt/extsd/rc-exp.sh
+if [ -f "$FORK_RC" ]; then
+	/bin/sh "$FORK_RC" && exit 0
 fi
 
 function insmod_all()

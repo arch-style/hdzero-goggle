@@ -32,7 +32,10 @@ for i in /etc/init.d/S??* ;do
      # あればこの S スクリプトの扱いを任せる (起動時間の実験用、2026-10-16 に
      # 追加)。init-exp.sh が 0 で終われば済んだものとし、0 以外なら純正どおり
      # 走らせる。カードが無いか init-exp.sh が無ければ純正と同じ。
-     if [ -f /mnt/extsd/init-exp.sh ] && /bin/sh /mnt/extsd/init-exp.sh "$i"; then
+     # 2026-10-29: カードの fork-system/ を先に見て、無ければ直下。
+     FORK_IE=/mnt/extsd/fork-system/init-exp.sh
+     [ -f "$FORK_IE" ] || FORK_IE=/mnt/extsd/init-exp.sh
+     if [ -f "$FORK_IE" ] && /bin/sh "$FORK_IE" "$i"; then
           continue
      fi
 

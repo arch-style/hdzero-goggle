@@ -6,7 +6,7 @@
 # 書くのは /mnt/app/setting.ini だけ。メニューで設定を変えたときにアプリが
 # 書くのと同じファイルで、他のフラッシュには触らない。
 #
-# カードの /mnt/extsd/goggle2-restore/ に置くもの (Mac で用意する):
+# カードの /mnt/extsd/fork-system/goggle2-restore/ に置くもの (Mac で用意する):
 #   setting.ini       書き戻す中身 (goggle2-backup/setting.ini の写し)
 #   setting.ini.md5   その md5。カードの中で壊れていたら書かない
 # 終わると同じ場所にできるもの:
@@ -15,7 +15,7 @@
 #   result.txt          経過と結果
 #   DONE                最後に書く。これがあれば次の起動からは何もしない
 
-R=/mnt/extsd/goggle2-restore
+R=/mnt/extsd/fork-system/goggle2-restore
 SRC="$R/setting.ini"
 DST=/mnt/app/setting.ini
 [ -f "$SRC" ] || exit 0

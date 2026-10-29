@@ -4,7 +4,7 @@
 # 一度だけ取っておく。develop.sh (develop.sh.dual) の Goggle 2 側から、アプリを
 # 起動する前に同期で呼ぶ。取っている間は映像が出ない (初回だけ、数十秒)。
 #
-# 結果は /mnt/extsd/goggle2-backup/。v1 の控え (goggle-backup/) とは分けてある。
+# 結果は /mnt/extsd/fork-system/goggle2-backup/。v1 の控え (goggle-backup/) とは分けてある。
 #   setting.ini            初回の設定
 #   setting.ini.last-boot  毎回の起動で取り直す (DONE があっても)
 #   mnt_app.tar            /mnt/app をファイル単位で
@@ -39,7 +39,7 @@ fi
 ( : > /mnt/extsd/.wtest ) 2>/dev/null || exit 0
 rm -f /mnt/extsd/.wtest
 
-B=/mnt/extsd/goggle2-backup
+B=/mnt/extsd/fork-system/goggle2-backup
 mkdir -p "$B" || exit 0
 cp /mnt/app/setting.ini "$B/setting.ini.last-boot"
 # 起動時間の実験 (develop.sh.dual が SYNC_BG=1 を渡す) では、ここの sync を

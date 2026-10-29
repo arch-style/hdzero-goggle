@@ -30,7 +30,7 @@ LOG=$DEL/init-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) early: $*" >> "$LOG" 2>/dev/null
 }
-t "start"
+t "start (from $0)"
 
 # 共有ライブラリ 47 本 (g2lib/) を /tmp/lib へ。init-exp.sh の EARLY_LIBCOPY と同じ。
 if [ -d $SYS/g2lib ] && [ ! -e /tmp/libcopy.started ]; then

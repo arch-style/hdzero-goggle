@@ -119,7 +119,7 @@ LOG=$DEL/rc-exp.log
 t() {
 	echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG" 2>/dev/null
 }
-echo "--- boot $BOOTN stage=$STAGE FAST=$FAST_LAUNCH LIBCOPY=$LIBCOPY DEFER_PORT1=$DEFER_PORT1 OSD_FIRST=$OSD_BEFORE_TUNER EFUSE_CACHE=$EFUSE_CACHE SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS PORT2=$PORT2_NOT_BEFORE" >> "$LOG" 2>/dev/null
+echo "--- boot $BOOTN from $0 stage=$STAGE FAST=$FAST_LAUNCH LIBCOPY=$LIBCOPY DEFER_PORT1=$DEFER_PORT1 OSD_FIRST=$OSD_BEFORE_TUNER EFUSE_CACHE=$EFUSE_CACHE SKIP_SLEEP1=$SKIP_SLEEP1 SKIP_DISPW=$SKIP_DISPW PARALLEL_DISPW=$PARALLEL_DISPW LATE_SDSTAT=$LATE_SDSTAT I2C_NOT_BEFORE=$I2C_NOT_BEFORE PRELOAD=$PRELOAD APP_BEFORE_I2C=$APP_BEFORE_I2C GATED=$APP_I2C_GATED_PORTS PORT2=$PORT2_NOT_BEFORE" >> "$LOG" 2>/dev/null
 t "rc-exp start"
 
 function insmod_all()
@@ -324,8 +324,11 @@ start_app() {
 	if [ "$FAST_LAUNCH" = 1 ] && fast_launch; then
 		return 0
 	fi
-	if [ -e /mnt/extsd/develop.sh ]; then
-		/mnt/extsd/develop.sh
+	# develop.sh は fork-system/ を先に見る (2026-10-29、入口の 4 本をフォルダへ)。
+	DEV=$SYS/develop.sh
+	[ -e "$DEV" ] || DEV=/mnt/extsd/develop.sh
+	if [ -e "$DEV" ]; then
+		"$DEV"
 	else
 		if [ -e /mnt/extsd/HDZGOGGLE.log ]; then
 			/mnt/app/app/HDZGOGGLE > /mnt/extsd/HDZGOGGLE.log 2>&1 &
@@ -478,6 +481,10 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 	  # 上書き領域の rcS の写し (v3) を入れ直す (goggle2-install-rcs.sh があれば、2026-10-20 夜)。
 	  # 一度だけ書き、効くのは次の起動から。結果は goggle2-install-rcs/result.txt。
 	  [ -f $SYS/goggle2-install-rcs.sh ] && /bin/sh $SYS/goggle2-install-rcs.sh g2 > /dev/null 2>&1
+	  # フラッシュの rc.sh と上書き領域の rc.final の入口を入れ直す (goggle2-install-hooks.sh が
+	  # あれば、2026-10-29)。一度だけ書き、効くのは次の起動から。結果は goggle2-install-hooks/result.txt。
+	  # それまでは develop.sh からしか呼ばれず、rc-exp.sh で起動する限り届かなかった。
+	  [ -f $SYS/goggle2-install-hooks.sh ] && /bin/sh $SYS/goggle2-install-hooks.sh g2 > /dev/null 2>&1
 	  # カーネルとブートローダの情報を読む (kernel-probe.sh があれば、2026-10-19)。読むだけ。
 	  [ -f $SYS/kernel-probe.sh ] && /bin/sh $SYS/kernel-probe.sh "$STAGE" "$BOOTN" > /dev/null 2>&1
 	  # initcall_debug を一度だけ入れて測り、戻す (env-initcall/ があれば、2026-10-19)。

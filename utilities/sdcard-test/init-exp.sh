@@ -181,7 +181,7 @@ if [ "$name" = S10udev ]; then
 	mkdir -p $DEL/boot-logs 2>/dev/null
 	# 2026-10-28 から stage の行は記録の前 (S10udev に入った時刻)。それまでは
 	# dmesg の写しの後だった。
-	t "stage $STAGE"
+	t "stage $STAGE (from $0)"
 	[ "$RECORDS_AFTER_START" = 1 ] || early_records
 	# ここから最低クロックを最高に固定する。ondemand は負荷を 2 秒に 1 回しか
 	# 見ず (sampling_rate 2000000)、起動中は 816 MHz のまま待つ回が多い。段階

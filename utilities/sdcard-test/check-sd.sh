@@ -71,7 +71,7 @@ done
 echo
 
 echo "== 2. develop.sh =="
-D="$SD/develop.sh"
+D="$SYSD/develop.sh"; [ -e "$D" ] || D="$SD/develop.sh"
 if [ ! -f "$D" ]; then
 	ng "develop.sh が無い (無ければ純正アプリが起動するだけ)"
 else
@@ -129,7 +129,7 @@ echo
 # rc-exp.sh: Goggle 2 のフラッシュの rc.sh に足した入口 (2026-10-16) が、
 # あれば純正の rc.sh の代わりに実行する。0 以外で終わると純正の rc.sh が
 # 続けて走り、録画やアプリが二重に起動する。
-X="$SD/rc-exp.sh"
+X="$SYSD/rc-exp.sh"; [ -e "$X" ] || X="$SD/rc-exp.sh"
 if [ -f "$X" ]; then
 	echo "== rc-exp.sh (Goggle 2 の rc.sh の代わり) =="
 	if LC_ALL=C grep -q "$(printf '\r')" "$X"; then
@@ -366,8 +366,8 @@ echo
 fi
 
 echo "== カード直下の整理 (2026-10-29) =="
-# 直下に置いてよいのは、純正の名前 (ゴーグルが作るフォルダと決まった名前のファイル)、
-# フラッシュの入口が名前で呼ぶ 4 本、fork の 2 つのフォルダだけ。ほかは fork-system/
+# 直下に置いてよいのは、純正の名前 (ゴーグルが作るフォルダと決まった名前のファイル) と
+# fork の 2 つのフォルダだけ (2026-10-29 から入口の 4 本も fork-system/)。ほかは fork-system/
 # (要る) か fork-deletable/ (消してよい) へ。危険ではないので注意だけ出す。
 extra=0
 for e in "$SD"/* ; do
@@ -375,13 +375,12 @@ for e in "$SD"/* ; do
 	case "$n" in
 	DCIM|FIRMWARE|FSCK|log|movies|ELRS|resource|isp0_0_0_0_ctx_saved.bin) ;;
 	RECORD.log|SERVICES.log|HDZGOGGLE.log) ;;
-	rc-exp.sh|init-exp.sh|early-exp.sh|develop.sh) ;;
 	fork-system|fork-deletable) ;;
 	\*) ;;
 	*) say "直下に $n がある (fork-system/ か fork-deletable/ へ)"; extra=$((extra + 1)) ;;
 	esac
 done
-[ $extra -eq 0 ] && ok "直下は純正のものと入口の 4 本、2 つのフォルダだけ"
+[ $extra -eq 0 ] && ok "直下は純正のものと 2 つのフォルダだけ"
 [ -d "$SYSD" ] || ng "fork-system/ が無い (アプリ本体、段階の番号、カメラ形式の控えがここにある)"
 echo
 
