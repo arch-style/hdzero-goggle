@@ -52,6 +52,7 @@ void app_tuner_reinit(void);
 // background. Called from the switch itself, and at start-up by Early Video
 // Timing so dispw runs during the UI build instead of after it.
 void start_display_timing_early(void);
+void start_display_timing_early_analog(void);
 // Take the display for the UI when Menu Over Video left it on the live source.
 // For pages that play video of their own; does nothing if the menu is not
 // overlaid.

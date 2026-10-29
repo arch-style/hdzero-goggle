@@ -42,6 +42,7 @@ SDL_mutex *global_sdl_mutex;
 #include "driver/i2c.h"
 #include "driver/it66021.h"
 #include "driver/it66121.h"
+#include "driver/rtc6715.h"
 #include "driver/mcp3021.h"
 #include "driver/rtc.h"
 #include "driver/screen.h"
@@ -96,6 +97,15 @@ static int boot_source(void) {
 static bool boot_ends_in_menu(void) {
     return boot_source() == SETTING_AUTOSCAN_SOURCE_HDZERO &&
            g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_OFF;
+}
+
+// True when start_running() will go straight to the analog receiver's video.
+// Boot 294 (2026-10-29) spent 170 ms of dispw and the receiver's 200 ms power
+// settling on the switch, both after the panel had been lit once with the UI
+// in between: the early display timing below does for this path what it does
+// for HDZero, and the receiver is powered while the UI is still being built.
+static bool boot_goes_to_analog_video(void) {
+    return boot_source() == SETTING_AUTOSCAN_SOURCE_AV_MODULE;
 }
 
 // True when start_running() will go straight to HDZero video, which is the
@@ -190,14 +200,25 @@ static void boot_workers_start(void) {
     // switch a third; Skip Boot Menu is required because the panel then stays
     // dark until the video arrives rather than being lit halfway through the
     // reconfiguration.
-    if (g_setting.speed.boot_display_early && boot_goes_to_hdzero_video()) {
+    if (g_setting.speed.boot_display_early && (boot_goes_to_hdzero_video() || boot_goes_to_analog_video())) {
         if (g_setting.speed.async_display && g_setting.speed.boot_display &&
-            g_setting.speed.skip_boot_menu)
-            start_display_timing_early();
-        else
+            g_setting.speed.skip_boot_menu) {
+            if (boot_goes_to_analog_video())
+                start_display_timing_early_analog();
+            else
+                start_display_timing_early();
+        } else
             LOGW("vdpo: Early Video Timing needs Async Display Setup, "
                  "Skip Display Setup and Skip Boot Menu; not starting early");
     }
+
+#if defined(HDZGOGGLE2)
+    // The built-in analog receiver's power takes 200 ms to settle, and the
+    // switch waited it out with the picture already due. Powered here, the
+    // switch only waits for what is left of it.
+    if (boot_goes_to_analog_video() && g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL)
+        rtc6715_power_early();
+#endif
 }
 
 #ifdef HDZGOGGLE2

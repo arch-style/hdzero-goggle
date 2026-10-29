@@ -201,7 +201,6 @@ void app_exit_menu() {
 }
 
 void app_switch_to_analog(bool is_av_in) {
-    dvr_update_vi_conf(VR_720P50);
     osd_fhd(0);
     osd_show(true);
     lvgl_switch_to_720p();
@@ -232,6 +231,13 @@ void app_switch_to_analog(bool is_av_in) {
 #if !defined HDZGOGGLE2
     sleep(1);
 #endif
+    // The record process's capture size, written to record.conf on /mnt/app.
+    // Three rewrites of a file on flash took 37 ms on boot 296 and 400 ms on
+    // boot 295 (2026-10-29), in front of the picture when this came first. It
+    // only has to be there before the live stop below, as on the HDZero
+    // switch, which does it with the recording side after the display.
+    dvr_update_vi_conf(VR_720P50);
+
     // Goggle 2: the HDZero switch sends the same stop with no wait in front of
     // it, and this second was spent holding the UI, so every analog switch
     // ignored the buttons for it.
@@ -302,6 +308,15 @@ void app_switch_to_hdmi_in() {
 // Which display timing the camera mode below will ask for. Mirrors the switch
 // further down, so the two have to stay in step; getting it wrong only costs
 // the head start, since vdpo_set_timing() runs the right one either way.
+// The analog switch's timing: AV_Mode_Switch_fpga() asks for 720p50 on PAL
+// and 720p60 otherwise, and collects this when it does.
+void start_display_timing_early_analog(void) {
+    if (g_setting.source.analog_format)
+        vdpo_start_timing_async(VDPO_TMG_720P50, "720p50");
+    else
+        vdpo_start_timing_async(VDPO_TMG_720P60, "720p60");
+}
+
 void start_display_timing_early(void) {
     switch (CAM_MODE) {
     case VR_720P50:

@@ -17,6 +17,7 @@
 #include "app_state.h"
 #include "ui/page_common.h"
 #include "util/system.h"
+#include "util/time.h"
 
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
 
@@ -52,6 +53,23 @@ static void MM_Write(uint8_t addr, uint32_t dat) {
     usleep(10000);
 }
 
+#define RTC6715_POWER_SETTLE_MS 200
+
+// When rtc6715_power_early() switched the receiver on, or 0.
+static uint32_t early_power_ms = 0;
+
+void rtc6715_power_early(void) {
+#if defined(HDZBOXPRO)
+    gpio_set(GPIO_RTC6715_ON, 1);
+#elif defined(HDZGOGGLE2)
+    DM5680_InternalAnalog_Power(1);
+#endif
+    early_power_ms = time_ms();
+    if (early_power_ms == 0)
+        early_power_ms = 1;
+    LOGI("RTC6715 power on early");
+}
+
 static void rtc6715_power(bool is_on) {
 #if defined(HDZBOXPRO)
     gpio_set(GPIO_RTC6715_ON, is_on);
@@ -60,8 +78,17 @@ static void rtc6715_power(bool is_on) {
 #endif
 
     if (is_on) {
-        usleep(200 * 1000); // wait for power stable
+        uint32_t wait_ms = RTC6715_POWER_SETTLE_MS; // wait for power stable
+
+        if (early_power_ms) {
+            uint32_t since = time_ms() - early_power_ms;
+
+            wait_ms = since < RTC6715_POWER_SETTLE_MS ? RTC6715_POWER_SETTLE_MS - since : 0;
+            LOGI("RTC6715 powered %ums ago, waiting %ums", since, wait_ms);
+        }
+        usleep(wait_ms * 1000);
     }
+    early_power_ms = 0;
     LOGI("RTC6715 power %s", is_on ? "on" : "off");
 }
 
