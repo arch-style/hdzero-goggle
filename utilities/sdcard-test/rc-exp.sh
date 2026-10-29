@@ -33,8 +33,11 @@ LATE_SDSTAT=1
 # 記録 (SD 状態ログ、dmesg、アプリのログの写し) を書くまでの待ち。サービスを
 # 起動してからの秒数。映像の後の port 1 (HDMI 出力、モーションセンサー) は
 # 9.7 秒ごろ、メニューの組み立ては 11 秒ごろに終わるので、7.8 秒 + 4 秒で
-# 両方が入る。2026-10-16 夜までは 10 で、ビープが電源から 18 秒だった
-RECORD_DELAY=4
+# 両方が入る。2026-10-16 夜までは 10 で、ビープが電源から 18 秒だった。
+# 2026-10-29 から 0: 映像は 4 秒台、メニューは 5 秒台、port 1 は 8 秒前後に終わり、
+# アプリのログ全体は fork-deletable/HDZGOGGLE.log に残る (次の起動で boot-logs/ へ)。
+# 写しは「ビープの時点まで」の分。ビープを早めるのが目的 (ユーザーの要望)。
+RECORD_DELAY=0
 # I2C に触る前に、電源投入からこの秒数になるまで待つ (0 = 待たない)。
 # 実験 i2/i3 (2026-10-16): ドライバの読み込みを 4.3 秒や 6.2 秒に始めると、
 # I2C port 1 が時間切れで使えなくなり起動画面で止まった。7.7 秒 (i1) は
@@ -294,14 +297,17 @@ fast_launch() {
 	( [ -e $SYS/goggle2-backup.sh ] && SYNC_BG=1 /bin/sh $SYS/goggle2-backup.sh g2
 	  echo "platform=[fast launch] model=g2" >> $DEL/model-history.txt
 	  [ -e $SYS/wifi-hello.sh ] && /bin/sh $SYS/wifi-hello.sh ) > /dev/null 2>&1 &
-	# 起動から 8 秒でアプリがいなければ純正で起動し、結果を書いたら
+	# 起動から LAUNCH_CHECK 秒でアプリがいなければ純正で起動し、結果を書いたら
 	# /tmp/launch-report.done を置く。記録を書く側 (LATE_SDSTAT) はこれを
 	# 待ってからビープを鳴らすので、ビープの後にカードへ書くものは残らない。
 	# 2026-10-16 夜までは、さらに 22 秒待ってから pid を書いていた。
+	# 2026-10-29 に 8 -> 3 秒: アプリが起動で落ちたのはどれも 1〜2 秒以内で、
+	# 3 秒なら確認は services started (7.9 秒ごろ) より前に終わり、ビープを待たせない。
+	LAUNCH_CHECK=3
 	FAST_USED=1
 	( echo "--- boot ---"
 	  echo "app: $APP (fast launch from rc-exp.sh, stage $STAGE)"
-	  sleep 8
+	  sleep "$LAUNCH_CHECK"
 	  if ! app_pid > /dev/null; then
 		echo "fork が起動しなかったので純正で起動する"
 		/mnt/app/app/HDZGOGGLE &
@@ -487,7 +493,10 @@ if [ "$LATE_SDSTAT" = 1 ]; then
 	  # カードから起動する作ったカーネル (hdzlike7 以降) は起動時の governor が performance。
 	  # 記録を書いた後は純正と同じ ondemand に戻す (純正カーネルでは ondemand のまま何もしない)。
 	  [ "$(cat $C/scaling_governor 2>/dev/null)" = performance ] && echo ondemand > $C/scaling_governor 2>/dev/null
-	  sync; t "records written (boot $BOOTN)"; sync; beep_short 1 ) &
+	  # 書き終えた合図の 2 ms のビープ。鳴ったら電源を切ってよい。止めたいときは
+	  # fork-system/no-beep を置く (2026-10-29、一度止めて戻した)。
+	  sync; t "records written (boot $BOOTN)"; sync
+	  [ -e $SYS/no-beep ] || beep_short 1 ) &
 fi
 
 exit 0
