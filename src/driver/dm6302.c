@@ -1905,6 +1905,105 @@ void DM6302_EFUSE2(uint8_t SEL6302) {
     }
 }
 
+// Card flags for the tuner init (2026-10-29), one experiment each, all off
+// unless the file is in fork-system/:
+//   tuner-dcoc-both   run the DC offset calibration on both chips at once
+//   tuner-dcoc-500us  wait 500 us per calibration step instead of 1 ms (the
+//                     stock comments say 500us; WAIT(1) was a millisecond)
+//   tuner-reset-50ms  wait 50 ms after the reset instead of 100 (no basis
+//                     other than trying it: the chips answer or the init
+//                     retries, and the efuse fingerprints say whether it held)
+static bool tuner_dcoc_both = false;
+static unsigned tuner_dcoc_wait_us = 1000;
+static unsigned tuner_reset_wait_us = 100000;
+
+static void tuner_flags_read(void) {
+    static bool read = false;
+
+    if (read)
+        return;
+    read = true;
+    tuner_dcoc_both = access("/mnt/extsd/fork-system/tuner-dcoc-both", F_OK) == 0;
+    if (access("/mnt/extsd/fork-system/tuner-dcoc-500us", F_OK) == 0)
+        tuner_dcoc_wait_us = 500;
+    if (access("/mnt/extsd/fork-system/tuner-reset-50ms", F_OK) == 0)
+        tuner_reset_wait_us = 50000;
+    LOGI("tuner flags: dcoc_both=%d dcoc_wait=%uus reset_wait=%ums",
+         tuner_dcoc_both, tuner_dcoc_wait_us, tuner_reset_wait_us / 1000);
+}
+
+#define DCOC_WAIT() usleep(tuner_dcoc_wait_us)
+
+// One receive path's DC offset calibration on both chips at once: every write
+// that is the same for both goes to both (sel 0), SPI_Read already returns
+// both chips' words, and only the measured offsets, which differ per chip,
+// are written back one chip at a time. The register sequence each chip sees
+// is the one DM6302_DCOC() gives it. base is 0x500 for rx1 and 0x600 for rx2,
+// lna the path's LNA register (0x494, 0x4D4).
+static void dcoc_path_both(uint16_t base, uint16_t lna, uint32_t i_out[2], uint32_t q_out[2]) {
+    static const struct {
+        uint16_t sel_reg;   // 0x4C: which part
+        uint32_t sel_val;
+        uint32_t ctrl;      // 0x00
+        uint32_t start;     // 0x54: start value
+        uint16_t dst;       // 0x40 (i) or 0x44 (q)
+        bool high;          // the high 16 bits, ORed into the low half
+    } step[4] = {
+        {0x4C, 1, 0x1FE5FF49, 0x01, 0x40, false}, // i path tia
+        {0x4C, 2, 0x2FA5FF49, 0x11, 0x40, true},  // i path pab
+        {0x4C, 4, 0x4F9DFF49, 0x21, 0x44, false}, // q path tia
+        {0x4C, 8, 0x8F8DFF49, 0x31, 0x44, true},  // q path pab
+    };
+    uint32_t r[2], dat[2] = {0, 0};
+
+    SPI_Write(0, 0x6, 0xFF0, 0x00000019);
+    SPI_Write(0, 0x3, 0x194, 0x0001FFFF);       // clk enable
+    SPI_Write(0, 0x6, 0xFF0, 0x00000018);
+    SPI_Write(0, 0x3, lna, 0x066727C0);         // lna disable
+    SPI_Write(0, 0x3, base + 0x40, 0x00000000); // clr dcoc i
+    SPI_Write(0, 0x3, base + 0x44, 0x00000000); // clr dcoc q
+    SPI_Write(0, 0x3, base + 0x50, 0x0000007F); // dcoc wait time
+    SPI_Write(0, 0x3, base + 0x54, 0x00000000); // dcoc stop
+
+    for (int k = 0; k < 4; k++) {
+        SPI_Write(0, 0x3, base + step[k].sel_reg, step[k].sel_val);
+        SPI_Write(0, 0x3, base + 0x00, step[k].ctrl);
+        SPI_Write(0, 0x3, base + 0x54, step[k].start); // dcoc start
+        DCOC_WAIT();
+        SPI_Write(0, 0x3, base + 0x54, 0x00000000);    // dcoc stop
+        SPI_Read(0x3, base + 0x58, &r[0], &r[1]);
+        for (int c = 0; c < 2; c++) {
+            if (step[k].high)
+                dat[c] |= r[c] << 16;
+            else
+                dat[c] = r[c] & 0xFFFF;
+            SPI_Write(c + 1, 0x3, base + step[k].dst, dat[c]);
+        }
+        if (step[k].high) {
+            uint32_t *out = (step[k].dst == 0x40) ? i_out : q_out;
+            out[0] = dat[0];
+            out[1] = dat[1];
+        }
+    }
+
+    SPI_Write(0, 0x3, base + 0x4C, 0x00000000);
+    SPI_Write(0, 0x3, base + 0x00, 0x0F85FFC9); // dcoc disable
+    SPI_Write(0, 0x3, lna, 0x066727CC);         // lna enable
+}
+
+static void DM6302_DCOC_both(void) {
+    uint32_t i1[2], q1[2], i2[2], q2[2];
+
+    dcoc_path_both(0x500, 0x494, i1, q1);
+    WAIT(10);
+    dcoc_path_both(0x600, 0x4D4, i2, q2);
+
+    for (int c = 0; c < 2; c++) {
+        LOGI("DCOC %d: rx1 i=%08x q=%08x", c + 1, i1[c], q1[c]);
+        LOGI("DCOC %d: rx2 i=%08x q=%08x", c + 1, i2[c], q2[c]);
+    }
+}
+
 // The measured offsets are logged per chip and path. They are what the
 // calibration produced on this boot, so a change to how the calibration is
 // run (both chips at once, say) can be checked against them.
@@ -1936,7 +2035,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200554, 1);               // dcoc start
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000001);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200554, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000000);
     // dat = read(0x200558) & 0xFFFF;   // low 16bit
@@ -1953,7 +2052,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200554, 0x11);            // dcoc start
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000011);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200554, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000000);
     // dat |= read(0x200558)<<16;       // high 16bit
@@ -1972,7 +2071,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200554, 0x21);            // dcoc start
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000021);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200554, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000000);
     // dat = read(0x200558) & 0xFFFF;   // low 16bit
@@ -1989,7 +2088,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200554, 0x31);            // dcoc start
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000031);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200554, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x554, 0x00000000);
     // dat |= read(0x200558)<<16;       // high 16bit
@@ -2035,7 +2134,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200654, 1);               // dcoc start
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000001);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200654, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000000);
     // temp = read(0x200658) & 0xFFFF;   // low 16bit
@@ -2052,7 +2151,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200654, 0x11);            // dcoc start
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000011);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200654, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000000);
     // dat |= read(0x200658)<<16;       // high 16bit
@@ -2071,7 +2170,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200654, 0x21);            // dcoc start
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000021);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200654, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000000);
     // dat = read(0x200658) & 0xFFFF;   // low 16bit
@@ -2088,7 +2187,7 @@ void DM6302_DCOC(uint8_t SEL6302) {
     // write(0x200654, 0x31);            // dcoc start
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000031);
     // delay(500us);                     // wait dcoc finish
-    WAIT(1);
+    DCOC_WAIT();
     // write(0x200654, 0);               // dcoc stop
     SPI_Write(SEL6302, 0x3, 0x654, 0x00000000);
     // dat |= read(0x200658)<<16;       // high 16bit
@@ -2208,13 +2307,15 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
     int to_cnt = 0;
     uint32_t r0 = 1, r1 = 1;
 
+    tuner_flags_read();
+
     dm6302_bus_fast();
 
     while (r0) {
         DM5680_ResetRF(0);
         usleep(1000);
         DM5680_ResetRF(1);
-        usleep(100000);
+        usleep(tuner_reset_wait_us);
 
         DM6302_Init0(0);
         LOGI("Init0 done");
@@ -2299,11 +2400,16 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
     DM6302_EFUSE2(2);
     LOGI("EFUSE2 2 done");
 
-    DM6302_DCOC(1);
-    LOGI("DCOC 1 done");
+    if (tuner_dcoc_both) {
+        DM6302_DCOC_both();
+        LOGI("DCOC both done");
+    } else {
+        DM6302_DCOC(1);
+        LOGI("DCOC 1 done");
 
-    DM6302_DCOC(2);
-    LOGI("DCOC 2 done");
+        DM6302_DCOC(2);
+        LOGI("DCOC 2 done");
+    }
 
     DM6302_M0();
     LOGI("M0 done");
