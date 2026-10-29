@@ -180,18 +180,20 @@ static __thread bool hdz_in_worker = false;
 // ten seconds of nothing. Cleared again as soon as an open gets anywhere.
 static bool hdz_async_init_failed = false;
 
-// /mnt/extsd/early-tune (card experiments): tune the boot channel here, as
+// On by default since 2026-10-29 (boots 308-309: tuned 0.17 s earlier, link
+// valid 22-62 ms after, picture undisturbed); fork-system/early-tune.off on
+// the card turns it off. Tune the boot channel here, as
 // soon as the receivers are up, instead of at the switch some 100 ms later.
 // On video the received picture follows the panel lighting by about a
 // quarter of a second, and if that is the link coming up after the tune, it
 // can come up while the main thread is still building the UI. The switch
 // then skips its own DM6302_SetChannel(): that rewrites the PLL and restarts
 // its calibration (0x118 strobes), which would throw the head start away.
-#define EARLY_TUNE_FLAG "/mnt/extsd/fork-system/early-tune"
+#define EARLY_TUNE_OFF "/mnt/extsd/fork-system/early-tune.off"
 static int hdz_early_tuned = -1; // (band << 8) | ch, or -1
 
 static void hdz_early_tune(void) {
-    if (access(EARLY_TUNE_FLAG, F_OK) != 0 || !g_hw_stat.hdzero_open)
+    if (access(EARLY_TUNE_OFF, F_OK) == 0 || !g_hw_stat.hdzero_open)
         return;
 
     uint8_t band = g_setting.source.hdzero_band;

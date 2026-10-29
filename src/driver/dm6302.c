@@ -1905,17 +1905,19 @@ void DM6302_EFUSE2(uint8_t SEL6302) {
     }
 }
 
-// Card flags for the tuner init (2026-10-29), one experiment each, all off
-// unless the file is in fork-system/:
+// The tuner init's shortcuts (2026-10-29). Each was tried alone from a card
+// flag and is now on by default (boots 303-309: fingerprints matched, no
+// retries, picture undisturbed with the VTX on); a file named <flag>.off in
+// fork-system/ turns one off again:
 //   tuner-dcoc-both   run the DC offset calibration on both chips at once
 //   tuner-dcoc-500us  wait 500 us per calibration step instead of 1 ms (the
 //                     stock comments say 500us; WAIT(1) was a millisecond)
 //   tuner-reset-50ms  wait 50 ms after the reset instead of 100 (no basis
 //                     other than trying it: the chips answer or the init
 //                     retries, and the efuse fingerprints say whether it held)
-static bool tuner_dcoc_both = false;
-static unsigned tuner_dcoc_wait_us = 1000;
-static unsigned tuner_reset_wait_us = 100000;
+static bool tuner_dcoc_both = true;
+static unsigned tuner_dcoc_wait_us = 500;
+static unsigned tuner_reset_wait_us = 50000;
 
 static void tuner_flags_read(void) {
     static bool read = false;
@@ -1923,11 +1925,12 @@ static void tuner_flags_read(void) {
     if (read)
         return;
     read = true;
-    tuner_dcoc_both = access("/mnt/extsd/fork-system/tuner-dcoc-both", F_OK) == 0;
-    if (access("/mnt/extsd/fork-system/tuner-dcoc-500us", F_OK) == 0)
-        tuner_dcoc_wait_us = 500;
-    if (access("/mnt/extsd/fork-system/tuner-reset-50ms", F_OK) == 0)
-        tuner_reset_wait_us = 50000;
+    if (access("/mnt/extsd/fork-system/tuner-dcoc-both.off", F_OK) == 0)
+        tuner_dcoc_both = false;
+    if (access("/mnt/extsd/fork-system/tuner-dcoc-500us.off", F_OK) == 0)
+        tuner_dcoc_wait_us = 1000;
+    if (access("/mnt/extsd/fork-system/tuner-reset-50ms.off", F_OK) == 0)
+        tuner_reset_wait_us = 100000;
     LOGI("tuner flags: dcoc_both=%d dcoc_wait=%uus reset_wait=%ums",
          tuner_dcoc_both, tuner_dcoc_wait_us, tuner_reset_wait_us / 1000);
 }
