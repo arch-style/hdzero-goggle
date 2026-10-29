@@ -281,7 +281,9 @@ app_pid() {
 fast_launch() {
 	[ -f $SYS/HDZGOGGLE ] || return 1
 	REPORT=$DEL/vo-patch.log
-	[ -e $SYS/goggle2-restore-setting.sh ] && /bin/sh $SYS/goggle2-restore-setting.sh g2
+	# 書き戻しが済んでいれば (DONE)、シェルを立てずに飛ばす。アプリの起動の前にあるので
+	# (2026-10-29)。
+	[ -e $SYS/goggle2-restore-setting.sh ] && [ ! -e $SYS/goggle2-restore/DONE ] && /bin/sh $SYS/goggle2-restore-setting.sh g2
 	SZ=$(ls -l $SYS/HDZGOGGLE | awk '{print $5}')
 	if [ -s /tmp/HDZGOGGLE.staged.done ] && [ "$(cat /tmp/HDZGOGGLE.staged.done)" = "$SZ" ] \
 	   && [ "$(ls -l /tmp/HDZGOGGLE.staged | awk '{print $5}')" = "$SZ" ] \

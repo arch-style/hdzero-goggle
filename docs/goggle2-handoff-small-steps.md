@@ -21,7 +21,7 @@ HDZero Goggle 2 の「電源から HDZero の映像まで」を、**新しい区
   - **PHOENIX**: PhoenixCard の復旧カード。中身は md5 で確認済み (`~/LocalCodes/hdzg-os-unpacked/card/layout-phoenix-image.txt`)。
 - 両カードのスクリプトはリポジトリ `utilities/sdcard-test/` と同じ。Mac の控えは `~/LocalCodes/hdzero-card-staging/HDZERO_BOOT-2026-10-20/`。
 - PhoenixCard で戻したときは、HDZERO_BOOT の `goggle2-restore/DONE`、`goggle2-install-hooks/DONE`、`goggle2-install-rcs/DONE` を外して 2 回起動すれば全部戻る。
-  - **2026-10-29 のカードの整理のあと、この手順はそのままでは動かない。** 4 本のスクリプト (`goggle2-install-hooks.sh`、`goggle2-install-rcs.sh`、`goggle2-restore-setting.sh`、`goggle2-backup.sh`) と `goggle2-flash/`、DONE のフォルダは `fork-deletable/` にあり、rc-exp.sh と develop.sh は `fork-system/` を探す。スクリプトの中のパスはカード直下のまま。使う前に、パスを `fork-system/` に直して移す必要がある (未対応)。
+  - (2026-10-29 夜に直した。今の手順は下の「旗を既定に…」の節。) **2026-10-29 のカードの整理のあと、この手順はそのままでは動かなかった。** 4 本のスクリプト (`goggle2-install-hooks.sh`、`goggle2-install-rcs.sh`、`goggle2-restore-setting.sh`、`goggle2-backup.sh`) と `goggle2-flash/`、DONE のフォルダは `fork-deletable/` にあり、rc-exp.sh と develop.sh は `fork-system/` を探す。スクリプトの中のパスはカード直下のまま。使う前に、パスを `fork-system/` に直して移す必要がある (未対応)。
 
 ## 直近の値
 
@@ -342,6 +342,15 @@ F1 はチップに送るレジスタ列を変えない範囲だけ (本体 `7bc0
 - 早めの選局: ワーカーで選局 (`HDZero: early tune band 0 ch 1`、38〜39 ms)、`link: tuned at` 703 / 741 ms (旗なしは 869〜914 ms)、受信の有効は選局の 22〜62 ms 後、切り替えでは `channel already tuned`。
 - `picture at` 851 / 886 ms (旗なしの 291〜293 は 924〜973 ms)。電源基準のパネル点灯: 遅い側 5.62 s (291 / 292 は 5.71 / 5.70)、速い側 5.45 s (293 は 5.54)。各 1 回ずつなので幅は未確定。
 - 旗 4 つはカードの fork-system/ に置いたまま。記録は `logs/goggle2/2026-10-29-tuner-flags-rf/`。
+
+### 旗を既定に、ログを 2 秒ごとに書き出す、書き戻しと控えを fork-system へ (2026-10-29、boot 311〜312、本体 0996e39e)
+
+- 受信チップの 3 つ (dcoc-both, dcoc-500us, reset-50ms) と early-tune は既定で入。止めるときは fork-system/ に `<名前>.off`。boot 311〜312 は旗のファイル無しで `tuner flags: dcoc_both=1 dcoc_wait=500us reset_wait=50ms` と `HDZero: early tune`、指紋一致、`picture at` 803 / 880 ms。
+- ログ: `lib/log/src/log.c` の書き出しのスレッドが、新しい分があれば 2 秒ごとに fsync (複製した記述子で、ログの排他の外)。boot 312 のログはアプリの起動の 7.8 s 後 (カーネル起動から約 11.0 s) まで。ビープ (8.64 s) の 5 s 後に電源を切ったとすれば、切る約 2.6 s 前まで残った (電源を切った正確な時刻は不明)。
+- ログの入り切りは Storage の画面の「Logging」(`storage.logging`、既定は切)。開発中のゴーグルは設定で入。
+- 書き戻し (`goggle2-restore-setting.sh`) と控え (`goggle2-backup.sh`) は、DONE のフォルダごと fork-system/ へ移し、パスを直した版にした。rc-exp.sh は書き戻しの DONE があればシェルを立てない (アプリの起動の前にあるので)。
+- これで PhoenixCard の後は、`fork-system/develop.sh` を直下に写し、入れ直しの DONE (`goggle2-install-hooks/`、`goggle2-install-rcs/`、設定も戻すなら `goggle2-restore/`) を外して起動すれば戻る。
+- 記録は `logs/goggle2/2026-10-29-log-fsync/`。
 
 ## 範囲外 (この作業ではやらない)
 

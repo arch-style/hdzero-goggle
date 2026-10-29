@@ -199,7 +199,7 @@ isp0_0_0_0_ctx_saved.bin) と、フラッシュの入口が名前で呼ぶ `rc-e
 - `fork-system/` (動かすのに要る): `HDZGOGGLE`、`HDZGOGGLE.features`、`g2lib/`、`ko/`、`lib/`、
   `preload.txt`、`stage.txt`、`cam-mode.txt`、`efuse-cache.bin`、`develop.g2.sh`
   (= develop.sh.vopatch)、`wifi-hello.sh`/`.txt`、`wifi-state.sh`、`goggle-backup/`、
-  `resource/OSD/FC/` (純正フォントの写し)。旗のファイル (`no-beep`、`early-tune`、
+  `resource/OSD/FC/` (純正フォントの写し)。旗のファイル (`no-beep`、止めるときの `early-tune.off`、`tuner-dcoc-both.off`、`tuner-dcoc-500us.off`、`tuner-reset-50ms.off`、
   `early-fps`、`novopatch`、`autotest.txt`) と、使うときだけ置く道具 (`app-sampler.sh`、
   `fill-probe.sh`、`kernel-probe.sh`、`env-*.sh`、`goggle2-*.sh`) もここ。
 - `fork-deletable/` (消してよい): `boot-logs/`、`HDZGOGGLE.log`、`rc-exp.log`、`init-exp.log`、
