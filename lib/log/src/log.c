@@ -26,20 +26,46 @@ static const char *log_level_names[] = {
     "FATAL",   // 3
 };
 
+// How often what has been written is forced out to the card. write() alone
+// leaves it in the page cache, and the kernel writes a FAT file back about
+// 30 s later: a goggle powered off after the records beep (about 9 s) lost
+// everything the app logged after the first few seconds (2026-10-29).
+#define LOG_FSYNC_SECONDS 2
+
 /**
  * Worker thread for updating log file on SD Card.
  */
 static void *log_sync_thread(void *arg) {
+    bool dirty = false;
+    int since_sync = 0;
 
     while (true) {
+        int fd_sync = -1;
+
         pthread_mutex_lock(&log_mutex);
 
         if (fd_log_file >= 0 && offline_offset > 0) {
             write(fd_log_file, offline_buffer, offline_offset);
             offline_offset = 0;
+            dirty = true;
+        }
+
+        // The fsync runs on a duplicate, outside the mutex: it can take tens
+        // of milliseconds on the card, and every thread that logs waits on
+        // that mutex. The duplicate keeps it valid if the file is closed
+        // meanwhile.
+        if (dirty && fd_log_file >= 0 && ++since_sync >= LOG_FSYNC_SECONDS) {
+            fd_sync = dup(fd_log_file);
+            dirty = false;
+            since_sync = 0;
         }
 
         pthread_mutex_unlock(&log_mutex);
+
+        if (fd_sync >= 0) {
+            fsync(fd_sync);
+            close(fd_sync);
+        }
 
         sleep(1);
     }
