@@ -21,6 +21,7 @@ HDZero Goggle 2 の「電源から HDZero の映像まで」を、**新しい区
   - **PHOENIX**: PhoenixCard の復旧カード。中身は md5 で確認済み (`~/LocalCodes/hdzg-os-unpacked/card/layout-phoenix-image.txt`)。
 - 両カードのスクリプトはリポジトリ `utilities/sdcard-test/` と同じ。Mac の控えは `~/LocalCodes/hdzero-card-staging/HDZERO_BOOT-2026-10-20/`。
 - PhoenixCard で戻したときは、HDZERO_BOOT の `goggle2-restore/DONE`、`goggle2-install-hooks/DONE`、`goggle2-install-rcs/DONE` を外して 2 回起動すれば全部戻る。
+  - **2026-10-29 のカードの整理のあと、この手順はそのままでは動かない。** 4 本のスクリプト (`goggle2-install-hooks.sh`、`goggle2-install-rcs.sh`、`goggle2-restore-setting.sh`、`goggle2-backup.sh`) と `goggle2-flash/`、DONE のフォルダは `fork-deletable/` にあり、rc-exp.sh と develop.sh は `fork-system/` を探す。スクリプトの中のパスはカード直下のまま。使う前に、パスを `fork-system/` に直して移す必要がある (未対応)。
 
 ## 直近の値
 
@@ -312,6 +313,35 @@ F1 はチップに送るレジスタ列を変えない範囲だけ (本体 `7bc0
 - 3 回とも映像は正常 (ユーザー確認)。head tracker の段階から選局まで 0.13〜0.14 s で揃った (前は 295 で 0.44 s)。record.conf の書き込みは映像の 0.6 s 後。
 - 遅い側の選局は 6.11 s (boot 294、改善前) → 5.56 s。速い側は 5.34〜5.36 s。デジタルのパネル点灯 (5.53 / 5.70 s、boot 293 / 292) と同じか早い。
 - 記録は `logs/goggle2/2026-10-29-analog-viconf-late/`。
+
+### 入口の 4 本を fork-system/ へ (2026-10-29、boot 301〜302)
+
+- フラッシュの入口を、`fork-system/` を先に見て無ければ直下を見る版にした。書いたのはカードの `goggle2-install-rcs.sh` と `goggle2-install-hooks.sh` (どちらも fork-system/、rc-exp.sh が記録の終わりに呼ぶ)。boot 301 で書き、boot 302 から新しい入口で動いた。
+  - rcS: fc9058fe → 514caff8 (v4、`goggle2-flash/rcS.v4`)。
+  - /mnt/app/script/rc.sh: cb87f258 → b766e563。
+  - rc.final (上書き領域): efe8f153 → f23fd7ab。
+  - 書き換え前の控えはカードの `fork-system/goggle2-install-*/` (*.before) と `logs/goggle2/2026-10-29-entry-move/`。
+- boot 302 の `rc-exp.log` の見出しは `from /mnt/extsd/fork-system/rc-exp.sh`、init-exp.log も early-exp も fork-system の版。直下の 4 本は同じ中身と確かめてから消した。直下は純正のものと 2 つのフォルダだけ。
+- boot 302 はアナログで、選局までは boot 301 と同じ順と時刻だったが、アプリのログ (約 7 s まで) に `Signal accquired` が無い。送信機の状態か未確認。
+- PhoenixCard のあと: 純正の rc.sh は直下の develop.sh しか呼ばないので、`fork-system/develop.sh` を直下に写し、`fork-system/goggle2-install-hooks/DONE` と `goggle2-install-rcs/DONE` を外して起動する。設定の書き戻し (`goggle2-restore-setting.sh`) と控え (`goggle2-backup.sh`) はリポジトリでは fork-system のパスに直したが、カードではまだ fork-deletable/ にあり動かない。
+
+### 受信チップの旗の結果 (2026-10-29、ドローンは切ったまま、本体 953cb0c6)
+
+| 起動 | 旗 | リセット→Init0 | DCOC | 初期化全体 |
+|---|---|---|---|---|
+| 273〜275、291 | なし | 約 117 | 133〜164 | 706〜724 |
+| 303〜305 | dcoc-both | 110〜115 | 70〜85 | 632〜701 |
+| 306〜307 | dcoc-both + dcoc-500us + reset-50ms | 68〜72 | 65〜78 | 581〜633 |
+
+(ms) 指紋は全回一致、"no response" 無し、DCOC の値は前と同じ範囲 (下位で ±2、上位 16 bit は揺れる)。dcoc-500us の効き (見込み 4 ms) は揺れと区別できない。ドローンを切っていたので、受信の質はまだ見ていない (303〜307 の "valid 0" はそのため)。
+次: ドローンを入れた 1 回の確認で、3 つの旗と `early-tune` をまとめて見る (映像が乱れないか、受信が有効になる時刻)。
+
+### ドローンを入れた確認 (2026-10-29、boot 308〜309、旗 4 つ: dcoc-both, dcoc-500us, reset-50ms, early-tune)
+
+- 映像の乱れは無し (ユーザー確認)。`Signal lost` 0、指紋一致、"no response" 無し。アプリのログは約 7 s で切れていて (ビープの後の分は電源断で失われる)、約 11 s の受信の強さの行は残っていないので、受信の強さは比べていない。
+- 早めの選局: ワーカーで選局 (`HDZero: early tune band 0 ch 1`、38〜39 ms)、`link: tuned at` 703 / 741 ms (旗なしは 869〜914 ms)、受信の有効は選局の 22〜62 ms 後、切り替えでは `channel already tuned`。
+- `picture at` 851 / 886 ms (旗なしの 291〜293 は 924〜973 ms)。電源基準のパネル点灯: 遅い側 5.62 s (291 / 292 は 5.71 / 5.70)、速い側 5.45 s (293 は 5.54)。各 1 回ずつなので幅は未確定。
+- 旗 4 つはカードの fork-system/ に置いたまま。記録は `logs/goggle2/2026-10-29-tuner-flags-rf/`。
 
 ## 範囲外 (この作業ではやらない)
 
