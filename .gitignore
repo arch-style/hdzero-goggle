@@ -29,3 +29,6 @@ result-*
 
 # Python byte-code left by the report scripts.
 __pycache__/
+
+# 純正の disp.ko を書き換えた写し。リポジトリには置かず make-disp-ko.sh で作る。
+/utilities/sdcard-test/goggle2-ko/disp.ko

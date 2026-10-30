@@ -6,6 +6,19 @@ Goggle 2 の起動時間の実験で、フラッシュに書かずにカーネ�
 
 ## disp.ko
 
+書き換えた disp.ko はリポジトリに置かない (GPL のモジュールで、元のソースが
+公開されていないため、改変したバイナリを配ると対応するソースを出せない)。
+`make-disp-ko.sh` が純正の disp.ko に 4 バイトのパッチを当てて、このフォルダの
+`disp.ko` (.gitignore 済み) を作る。
+
+    utilities/sdcard-test/goggle2-ko/make-disp-ko.sh            # 本家がリポジトリに入れている純正から
+    utilities/sdcard-test/goggle2-ko/make-disp-ko.sh <純正の disp.ko> [出力先] [待ち ms]
+
+入力は md5 と書き換える 4 バイトを確かめてから使い、待ちが 100 ms のときは
+出来上がりの md5 が `disp.ko.md5` と一致することも確かめる。本家の
+`mkapp/app/ko/disp.ko` は Goggle 2 の 9.5.1 の /mnt/app/ko/disp.ko と同じもの
+(md5 01f5f9a0、2026-10-30 に確認)。
+
 純正 9.5.1 の /mnt/app/ko/disp.ko (md5 01f5f9a0adf42fee6b159f35113cff89、
 logs/goggle2/2026-10-15-flash-backup/mnt_app.tar の app/ko/disp.ko) の写しで、
 4 バイトだけ違う。
@@ -30,5 +43,5 @@ disp_tv_disable() と同じ形の待ちが、このモジュール独自の disp
 
 確かめ方: 起動後の dmesg で `[VDPO]` の disable → enable の間隔が 0.1 秒ほどに
 なっていること、入力を切り替えても画面が乱れないこと。乱れるなら
-`4f f0 64 00` の `64` (100 ms) を大きくして作り直す (作り方は git log のこの
-ファイルを足したコミットの python)。
+`4f f0 64 00` の `64` (100 ms) を大きくして作り直す (`make-disp-ko.sh` の
+3 つ目の引数、1-255 ms)。

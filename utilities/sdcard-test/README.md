@@ -180,7 +180,7 @@ Goggle 2 で一度起動し、映像が出るまで待つ (初回だけ数十秒
 - 画面のモードの切り替え (`dispw -s vdpo ...`) に毎回 1 秒かかるのは、
   disp.ko の disp_vdpo_disable() の最後にある 1000 ms の待ち。disp.ko は
   `dispw -x` が /mnt/app/ko から insmod するだけなので、待ちを 100 ms に
-  書き換えた写し (`goggle2-ko/disp.ko`) をカードの `ko/` に置けば、
+  書き換えた写し (`goggle2-ko/make-disp-ko.sh` で作る `goggle2-ko/disp.ko`) をカードの `ko/` に置けば、
   rc-exp.sh と init-exp.sh の `dispw_x` がそれを入れる。フラッシュは触らない。
 - 起動の揺れ (同じ設定で 0.5 秒) は CPU のクロック。ondemand は負荷を 2 秒に
   1 回しか見ず、多くの回は 816 MHz のまま起動する。rcS の写しの先頭と
