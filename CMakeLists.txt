@@ -55,26 +55,19 @@ set(STANDARD_LIBRARIES
 # Stamped into the log at start-up. Logs get compared across builds and passed
 # between people, and "which binary wrote this" was not answerable from the
 # file: /mnt/app/version describes the flashed app, not a binary being run off
-# the SD card. git is not always in the build container, hence the fallback.
-file(STRINGS ${PROJECT_SOURCE_DIR}/VERSION APP_BASE_VERSION LIMIT_COUNT 1)
-execute_process(
-	COMMAND git describe --always --dirty
-	WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-	OUTPUT_VARIABLE APP_BUILD_ID
-	OUTPUT_STRIP_TRAILING_WHITESPACE
-	ERROR_QUIET
+# the SD card. Taken on every build, not at configure time (build_id.cmake).
+set(BUILD_ID_H "${CMAKE_CURRENT_BINARY_DIR}/build_id.h")
+add_custom_target(build_id
+	COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${PROJECT_SOURCE_DIR} -DOUT=${BUILD_ID_H}
+		-P ${PROJECT_SOURCE_DIR}/src/core/build_id.cmake
+	BYPRODUCTS ${BUILD_ID_H}
+	COMMENT "Taking the build id"
 )
-if(NOT APP_BUILD_ID)
-	set(APP_BUILD_ID "no-git")
-endif()
-message(STATUS "build id: ${APP_BASE_VERSION}-${APP_BUILD_ID}")
 
 add_definitions(
 	-DAWCHIP=AW_V5 
 	-D_GNU_SOURCE 
 	-DUSE_LOG_LIB_GLOG
-	-DAPP_BASE_VERSION="${APP_BASE_VERSION}"
-	-DAPP_BUILD_ID="${APP_BUILD_ID}"
 )
 
 if(EMULATOR_BUILD)
@@ -148,9 +141,12 @@ else()
 endif()
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
+add_dependencies(${PROJECT_NAME} build_id)
 
 target_include_directories(${PROJECT_NAME} PRIVATE 
 	src/
+	# build_id.h
+	${CMAKE_CURRENT_BINARY_DIR}
 	src/core
 	src/driver
 	src/player

@@ -12,6 +12,8 @@
 #include <lvgl/lvgl.h>
 #include <minIni.h>
 
+#include "build_id.h"
+
 #include "lang/language.h"
 
 #ifdef EMULATOR_BUILD
