@@ -451,6 +451,16 @@ elif [ -e /mnt/app/services/startup.sh ]; then
 fi
 t "services started"
 
+# 試験用の formatsd.sh (fork-system/formatsd.sh があれば、2026-10-30、PR #626 の確認)。
+# /tmp に写して純正の /mnt/app/script/formatsd.sh の上に bind mount する。RAM の上
+# だけでフラッシュには書かず、次の起動で消える。カードの写しを直接つなぐと
+# formatsd.sh の umount /mnt/extsd が使用中で失敗するので /tmp から
+if [ -f $SYS/formatsd.sh ]; then
+	cp $SYS/formatsd.sh /tmp/formatsd.sh && chmod +x /tmp/formatsd.sh \
+		&& mount --bind /tmp/formatsd.sh /mnt/app/script/formatsd.sh \
+		&& t "formatsd.sh from card"
+fi
+
 if [ "$APP_BEFORE_I2C" != 1 ]; then
 	wait_dispw
 
