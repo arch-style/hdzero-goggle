@@ -50,7 +50,9 @@
 // 2.86MB/s. The number in the name keeps climbing; only the window moves.
 #define APP_LOG_KEEP      999
 #define APP_BIN_FILE      FORK_SYSTEM_DIR "/HDZGOGGLE"
-#define DEVELOP_SCRIPT    "/mnt/extsd/develop.sh"// The 9.5.1 Goggle 2 tree had this as a runtime check; in the merged tree the
+#define DEVELOP_SCRIPT    "/mnt/extsd/develop.sh"
+
+// The 9.5.1 Goggle 2 tree had this as a runtime check; in the merged tree the
 // target is a compile-time choice, so it is one here too.
 #ifdef HDZGOGGLE2
 #define GOGGLE_VER_2 1
