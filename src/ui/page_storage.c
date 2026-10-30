@@ -634,6 +634,20 @@ bool page_storage_is_sd_repair_active() {
 }
 
 /**
+ * A card was inserted after boot and did not mount (exFAT as shipped, shown
+ * as Unsupported). The controls are otherwise only looked at again when a
+ * card that mounts goes in, so after booting from a card that holds the fork
+ * they stayed disabled and the new card could not be formatted (2026-10-30).
+ */
+void page_storage_on_unmounted_card() {
+    pthread_mutex_lock(&lvgl_mutex);
+    if (!page_storage.is_auto_sd_repair_active) {
+        page_storage_update_controls();
+    }
+    pthread_mutex_unlock(&lvgl_mutex);
+}
+
+/**
  * Once initialized detach until completed.
  */
 void page_storage_init_auto_sd_repair() {

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -33,6 +34,10 @@
 #include "util/system.h"
 
 void (*sdcard_ready_cb)() = NULL;
+
+// How long a newly inserted card may take to mount before it is treated as
+// one that cannot be mounted (see detect_sdcard).
+#define SDCARD_UNMOUNTED_WAIT_S 5
 
 ///////////////////////////////////////////////////////////////////////////////
 // SD card exist
@@ -77,6 +82,34 @@ static void detect_sdcard(void) {
             if (record_pending && g_sdcard_ready && !sdcard_is_full()) {
                 dvr_cmd(DVR_START);
             }
+
+            // A card that is inserted but does not mount never reaches the
+            // callback above, so the storage controls are not looked at
+            // again. When a card goes in (the device appears; the card at
+            // boot is left to the boot path) and has not mounted after a
+            // while, tell the storage page. Only an insertion starts this, so
+            // the unmount during a format is not taken for such a card, and
+            // the wait keeps a card that is still being mounted from it.
+            static bool sdcard_present_last = true;
+            static bool unmounted_watch = false;
+            static struct timespec inserted_at;
+            bool present = sdcard_inserted();
+            if (present && !sdcard_present_last) {
+                clock_gettime(CLOCK_MONOTONIC, &inserted_at);
+                unmounted_watch = true;
+            }
+            if (!present || g_sdcard_enable) {
+                unmounted_watch = false;
+            } else if (unmounted_watch) {
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                if (now.tv_sec - inserted_at.tv_sec >= SDCARD_UNMOUNTED_WAIT_S) {
+                    unmounted_watch = false;
+                    LOGI("SD card inserted but not mounted");
+                    page_storage_on_unmounted_card();
+                }
+            }
+            sdcard_present_last = present;
 
             sdcard_enable_last = g_sdcard_enable;
         }
